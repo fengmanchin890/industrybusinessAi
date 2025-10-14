@@ -3,6 +3,7 @@ import { useAuth } from '../Contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Building2, User, CreditCard, Database, Upload, FileSpreadsheet, Link as LinkIcon } from 'lucide-react';
 import { useState } from 'react';
+import ReactDOM from 'react-dom';
 
 export function SettingsView() {
   const { profile, company } = useAuth();
@@ -41,6 +42,28 @@ export function SettingsView() {
   const [instagram, setInstagram] = useState('');
   const [line, setLine] = useState('');
   const [savingBrand, setSavingBrand] = useState(false);
+
+  // 社群通路金鑰（channel_tokens）
+  const [ch, setCh] = useState<'facebook'|'instagram'|'line'>('line');
+  const [token, setToken] = useState('');
+  const [pageId, setPageId] = useState('');
+  const saveToken = async () => {
+    if (!company?.id) return;
+    const { data: exists } = await supabase
+      .from('channel_tokens')
+      .select('id')
+      .eq('company_id', company.id)
+      .eq('channel', ch)
+      .maybeSingle();
+
+    const payload: any = { company_id: company.id, channel: ch, access_token: token, page_id: pageId || null };
+    const req = exists
+      ? supabase.from('channel_tokens').update(payload).eq('id', exists.id)
+      : supabase.from('channel_tokens').insert(payload);
+    const { error } = await req;
+    if (error) { alert('儲存失敗：' + error.message); return; }
+    alert('已儲存通路金鑰');
+  };
 
   // 簡易 CSV 解析（與 VoiceOrdering 共用邏輯）
   const parseCsv = (text: string): any[] => {
@@ -259,6 +282,26 @@ export function SettingsView() {
             <p className="text-sm text-slate-600">
               連接您的資料來源以啟用 AI 分析：
             </p>
+
+            {/* 社群通路金鑰 */}
+            <div className="p-3 bg-white rounded border">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-sm font-medium text-slate-700">社群通路金鑰</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select className="border px-2 py-1 rounded" value={ch} onChange={e=>setCh(e.target.value as any)}>
+                  <option value="line">LINE Notify</option>
+                  <option value="facebook">Facebook Page</option>
+                  <option value="instagram">Instagram（預留）</option>
+                </select>
+                <input className="border px-2 py-1 rounded w-64" placeholder="Access Token" value={token} onChange={e=>setToken(e.target.value)} />
+                <input className="border px-2 py-1 rounded w-64" placeholder="Page ID（FB 需填）" value={pageId} onChange={e=>setPageId(e.target.value)} />
+                <button onClick={saveToken} className="px-3 py-1 bg-blue-600 text-white rounded">儲存</button>
+              </div>
+              <p className="text-xs text-slate-500 mt-2">LINE 請貼 Notify Token；Facebook 請貼粉專長效 Token，並填 Page ID。</p>
+              {/* 顯示已儲存的金鑰（遮罩） */}
+              <SavedTokens companyId={company?.id} />
+            </div>
 
             <div className="space-y-2">
               {/* f&b 優先：CSV 與 POS */}
@@ -642,3 +685,57 @@ export function SettingsView() {
     </div>
   );
 }
+
+function SavedTokens({ companyId }: { companyId?: string }) {
+  const [rows, setRows] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(false);
+
+  const load = React.useCallback(async () => {
+    if (!companyId) return;
+    setLoading(true);
+    try {
+      const { data } = await supabase
+        .from('channel_tokens')
+        .select('id,channel,access_token,page_id,created_at')
+        .eq('company_id', companyId)
+        .order('created_at', { ascending: false });
+      setRows((data as any) || []);
+    } finally { setLoading(false); }
+  }, [companyId]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  const mask = (t: string) => t ? (t.substring(0, 4) + '••••' + t.substring(Math.max(t.length-4,4))) : '';
+
+  const remove = async (id: string) => {
+    if (!confirm('確定刪除此金鑰？')) return;
+    await supabase.from('channel_tokens').delete().eq('id', id);
+    await load();
+  };
+
+  if (!companyId) return null;
+  return (
+    <div className="mt-3 border-t pt-3">
+      <div className="text-xs text-slate-600 mb-2">已儲存金鑰</div>
+      {loading ? (
+        <div className="text-xs text-slate-500">載入中…</div>
+      ) : rows.length === 0 ? (
+        <div className="text-xs text-slate-500">尚無資料</div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map(r => (
+            <div key={r.id} className="flex items-center justify-between text-sm bg-slate-50 rounded p-2">
+              <div className="flex items-center gap-3">
+                <span className="px-2 py-0.5 rounded bg-white border">{r.channel}</span>
+                <span className="text-slate-700">{mask(r.access_token || '')}</span>
+                {r.page_id && <span className="text-slate-500">Page:{r.page_id}</span>}
+              </div>
+              <button onClick={()=>remove(r.id)} className="text-xs px-2 py-1 bg-red-50 text-red-600 rounded border border-red-200">刪除</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+

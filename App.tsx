@@ -1,4 +1,4 @@
-import { useState, Component, ErrorInfo, ReactNode } from 'react';
+import React, { useState, Component, ErrorInfo, ReactNode, useEffect } from 'react';
 import { AuthProvider, useAuth } from './Contexts/AuthContext';
 import { LoginForm } from './src/components/Auth/LoginForm';
 import { RegisterForm } from './src/components/Auth/RegisterForm';
@@ -7,7 +7,8 @@ import { Overview } from './DashBoard/Overview';
 import { ModulesView } from './Modules/ModuleView';
 import { ReportsView } from './Reports/ReporsView';
 import { AlertsView } from './src/components/Alerts/AlertsView';
-import { SettingsView } from './Setting/SettingViews';
+import { SettingsView } from './Setting/Settingviews';
+import { MobileOptimization } from './src/components/Mobile/MobileOptimization';
 import { Building2, AlertTriangle, RefreshCw } from 'lucide-react';
 
 // 错误边界组件
@@ -179,10 +180,27 @@ function AppContent() {
 }
 
 function App() {
+  // 註冊 Service Worker
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then((registration) => {
+            console.log('SW registered: ', registration);
+          })
+          .catch((registrationError) => {
+            console.log('SW registration failed: ', registrationError);
+          });
+      });
+    }
+  }, []);
+
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <AppContent />
+        <MobileOptimization>
+          <AppContent />
+        </MobileOptimization>
       </AuthProvider>
     </ErrorBoundary>
   );

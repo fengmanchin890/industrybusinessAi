@@ -68,7 +68,8 @@ export function ReportsView() {
     { value: 'weekly', label: '每週' },
     { value: 'monthly', label: '每月' },
     { value: 'alert', label: '警示' },
-    { value: 'custom', label: '自訂' }
+    { value: 'custom', label: '自訂' },
+    { value: 'marketing', label: '行銷' }
   ];
 
   const filteredReports = selectedType === 'all'
