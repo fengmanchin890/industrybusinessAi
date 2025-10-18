@@ -37,7 +37,10 @@ export function ModuleStore({
 }) {
   const { company } = useAuth();
   const [modules, setModules] = useState<ModuleWithStatus[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  // 初始化時就設定為公司行業，如果沒有則設為 'all'
+  const [selectedCategory, setSelectedCategory] = useState<string>(
+    company?.industry || 'all'
+  );
   const [loading, setLoading] = useState(true);
   const [installing, setInstalling] = useState<string | null>(null);
 
@@ -45,9 +48,10 @@ export function ModuleStore({
     loadModules();
   }, [company?.id]);
 
-  // 當公司資訊載入後，預設切換到公司的產業分類（例如: f&b）
+  // 當公司資訊載入後，預設切換到公司的產業分類（例如: manufacturing）
   useEffect(() => {
     if (company?.industry) {
+      console.log('🏭 Setting default category to company industry:', company.industry);
       setSelectedCategory(company.industry);
     }
   }, [company?.industry]);
@@ -170,7 +174,16 @@ export function ModuleStore({
     return Icon || Icons.Box;
   };
 
-  const categories = ['all', ...new Set(modules.map((m) => m.category))];
+  // 只顯示用戶行業的分類，隱藏其他行業分類
+  const categories = company?.industry 
+    ? ['all', company.industry] 
+    : ['all', ...new Set(modules.map((m) => m.category))];
+  
+  console.log('🏷️ Available categories for user:', {
+    userIndustry: company?.industry,
+    categories: categories,
+    totalModules: modules.length
+  });
 
   const filteredModules = selectedCategory === 'all'
     ? modules

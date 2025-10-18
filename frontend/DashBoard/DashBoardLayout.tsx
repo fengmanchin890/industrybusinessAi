@@ -9,7 +9,8 @@ import {
   LogOut,
   Menu,
   Building2,
-  ChevronDown
+  ChevronDown,
+  Zap
 } from 'lucide-react';
 import { MobileNav } from '../src/components/Mobile/MobileNav';
 
@@ -21,6 +22,7 @@ interface DashboardLayoutProps {
 
 const navigation = [
   { id: 'overview', label: '總覽', icon: 'LayoutDashboard' },
+  { id: 'integrated', label: '🚀 整合分析', icon: 'Zap' },
   { id: 'modules', label: 'AI 模組', icon: 'Store' },
   { id: 'reports', label: '報告', icon: 'FileText' },
   { id: 'alerts', label: '提醒', icon: 'Bell' },

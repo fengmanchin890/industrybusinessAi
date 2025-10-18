@@ -14,13 +14,13 @@ import { generateText, analyzeData } from '../../../lib/ai-service';
 const metadata: ModuleMetadata = {
   id: 'financial-analyzer',
   name: 'AI 財務分析助理',
-  version: '1.0.0',
+  version: '2.0.0',
   category: 'sme',
   industry: ['sme'],
-  description: '智能財務分析，現金流預測，預算建議，為中小企業提供財務決策支援',
+  description: 'AI 智能財務分析，現金流預測，預算建議，完整 API 集成，為中小企業提供財務決策支援',
   icon: 'Calculator',
   author: 'AI Business Platform',
-  pricingTier: 'basic',
+  pricingTier: 'pro',
   features: [
     '現金流預測分析',
     '自動預算建議',
@@ -91,43 +91,180 @@ export function FinancialAnalyzerModule({ context }: { context: ModuleContext })
     
     setLoading(true);
     try {
-      // 模擬財務數據 - 實際應用中會從 ERP/會計系統獲取
-      const mockData: FinancialData[] = [
-        { id: '1', date: '2024-01-01', type: 'income', category: '銷售收入', amount: 500000, description: '產品銷售' },
-        { id: '2', date: '2024-01-02', type: 'expense', category: '人事成本', amount: 150000, description: '員工薪資' },
-        { id: '3', date: '2024-01-03', type: 'expense', category: '營運費用', amount: 80000, description: '辦公室租金' },
-        { id: '4', date: '2024-01-04', type: 'income', category: '服務收入', amount: 200000, description: '諮詢服務' },
-        { id: '5', date: '2024-01-05', type: 'expense', category: '行銷費用', amount: 50000, description: '廣告投放' },
-        { id: '6', date: '2024-01-06', type: 'expense', category: '設備維護', amount: 30000, description: '設備保養' },
-        { id: '7', date: '2024-01-07', type: 'income', category: '其他收入', amount: 100000, description: '投資收益' },
-        { id: '8', date: '2024-01-08', type: 'expense', category: '稅務費用', amount: 40000, description: '營業稅' }
-      ];
+      // 從數據庫載入財務交易
+      const endDate = new Date().toISOString().split('T')[0];
+      const startDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       
-      setFinancialData(mockData);
+      const { data: transactions, error } = await supabase
+        .from('financial_transactions')
+        .select('*')
+        .eq('company_id', company.id)
+        .gte('transaction_date', startDate)
+        .lte('transaction_date', endDate)
+        .eq('status', 'confirmed')
+        .order('transaction_date', { ascending: false });
+
+      if (error) throw error;
+
+      // 轉換為前端格式
+      const financialDataFromDB: FinancialData[] = (transactions || []).map((t: any) => ({
+        id: t.id,
+        date: t.transaction_date,
+        type: t.transaction_type as 'income' | 'expense',
+        category: t.category,
+        amount: parseFloat(t.amount),
+        description: t.description || ''
+      }));
       
-      // 計算摘要
-      const totalIncome = mockData.filter(d => d.type === 'income').reduce((sum, d) => sum + d.amount, 0);
-      const totalExpense = mockData.filter(d => d.type === 'expense').reduce((sum, d) => sum + d.amount, 0);
-      const netProfit = totalIncome - totalExpense;
+      setFinancialData(financialDataFromDB);
       
-      setSummary({
-        totalIncome,
-        totalExpense,
-        netProfit,
-        cashFlowTrend: netProfit > 0 ? 'up' : netProfit < -50000 ? 'down' : 'stable',
-        riskLevel: netProfit < -100000 ? 'high' : netProfit < 0 ? 'medium' : 'low'
-      });
+      // 調用 AI 計算財務指標
+      await calculateMetricsWithAI(startDate, endDate);
       
-      // 生成現金流預測
-      generateCashFlowProjection(mockData);
+      // 調用 AI 生成現金流預測
+      await generateCashFlowProjectionWithAI();
       
-      // 生成預算建議
-      generateBudgetRecommendations(mockData);
+      // 調用 AI 生成預算建議
+      await generateBudgetRecommendationsWithAI();
       
     } catch (error) {
       console.error('載入財務數據失敗:', error);
+      // Fallback to empty state
+      setFinancialData([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // AI 計算財務指標
+  const calculateMetricsWithAI = async (startDate: string, endDate: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session || !company?.id) return;
+
+      const response = await fetch(
+        `${(import.meta as any).env.VITE_SUPABASE_URL}/functions/v1/financial-analysis-ai`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            action: 'calculate_financial_metrics',
+            data: {
+              companyId: company.id,
+              startDate,
+              endDate
+            }
+          })
+        }
+      );
+
+      if (!response.ok) throw new Error('API 錯誤');
+
+      const result = await response.json();
+      const metrics = result.data;
+
+      setSummary({
+        totalIncome: metrics.totalRevenue || 0,
+        totalExpense: metrics.totalExpense || 0,
+        netProfit: metrics.netProfit || 0,
+        cashFlowTrend: metrics.netProfit > 0 ? 'up' : metrics.netProfit < -50000 ? 'down' : 'stable',
+        riskLevel: metrics.netProfit < -100000 ? 'high' : metrics.netProfit < 0 ? 'medium' : 'low'
+      });
+    } catch (error) {
+      console.error('AI 計算指標失敗:', error);
+    }
+  };
+
+  // AI 現金流預測
+  const generateCashFlowProjectionWithAI = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session || !company?.id) return;
+
+      const response = await fetch(
+        `${(import.meta as any).env.VITE_SUPABASE_URL}/functions/v1/financial-analysis-ai`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            action: 'predict_cash_flow',
+            data: {
+              companyId: company.id,
+              monthsAhead: 6
+            }
+          })
+        }
+      );
+
+      if (!response.ok) throw new Error('API 錯誤');
+
+      const result = await response.json();
+      const predictions = result.data?.predictions || [];
+
+      const projections: CashFlowProjection[] = predictions.map((p: any) => ({
+        month: p.projection_month,
+        projectedIncome: parseFloat(p.projected_income),
+        projectedExpense: parseFloat(p.projected_expense),
+        netCashFlow: parseFloat(p.net_cash_flow),
+        cumulativeBalance: parseFloat(p.net_cash_flow)
+      }));
+
+      setCashFlowProjection(projections);
+    } catch (error) {
+      console.error('AI 現金流預測失敗:', error);
+      // Fallback to basic projection
+      generateCashFlowProjection(financialData);
+    }
+  };
+
+  // AI 預算建議
+  const generateBudgetRecommendationsWithAI = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session || !company?.id) return;
+
+      const response = await fetch(
+        `${(import.meta as any).env.VITE_SUPABASE_URL}/functions/v1/financial-analysis-ai`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            action: 'generate_budget_recommendations',
+            data: {
+              companyId: company.id,
+              period: 'monthly'
+            }
+          })
+        }
+      );
+
+      if (!response.ok) throw new Error('API 錯誤');
+
+      const result = await response.json();
+      const recommendations = result.data?.recommendations || [];
+
+      const budgetRecs: BudgetRecommendation[] = recommendations.map((r: any) => ({
+        category: r.category,
+        currentSpending: parseFloat(r.currentSpending),
+        recommendedBudget: parseFloat(r.recommendedBudget),
+        variance: parseFloat(r.variance),
+        priority: r.priority
+      }));
+
+      setBudgetRecommendations(budgetRecs);
+    } catch (error) {
+      console.error('AI 預算建議失敗:', error);
+      // Fallback to basic recommendations
+      generateBudgetRecommendations(financialData);
     }
   };
 

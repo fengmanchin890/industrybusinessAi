@@ -1,17 +1,27 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 import pandas as pd
 from io import BytesIO
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import logging
+from datetime import datetime
+from app.services.connection_manager import connection_manager
+from app.models.connection import (
+    ConnectionType, ConnectionStatus, ConnectionCreateRequest,
+    ExcelUploadResponse
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
 
-@router.post("/excel")
-async def upload_excel(file: UploadFile = File(...)):
-    """Upload Excel/CSV for data import"""
+@router.post("/excel", response_model=ExcelUploadResponse)
+async def upload_excel(
+    file: UploadFile = File(...),
+    connection_name: Optional[str] = None,
+    company_id: Optional[str] = None
+):
+    """Upload Excel/CSV for data import and create connection"""
     try:
         logger.info(f"Received file upload: {file.filename}")
         
@@ -41,12 +51,42 @@ async def upload_excel(file: UploadFile = File(...)):
         
         logger.info(f"Parsed file {file.filename}: {stats['rows']} rows, {len(stats['columns'])} columns")
         
-        return {
-            "filename": file.filename,
-            "stats": stats,
-            "preview": records[:5],  # First 5 rows as preview
-            "total_rows": len(records)
-        }
+        # Create or update connection
+        conn_name = connection_name or f"Excel - {file.filename}"
+        connection = await connection_manager.create_connection(
+            ConnectionCreateRequest(
+                name=conn_name,
+                type=ConnectionType.EXCEL,
+                config={
+                    "filename": file.filename,
+                    "uploaded": True,
+                    "rows": len(records),
+                    "columns": len(df.columns),
+                    "upload_time": datetime.now().isoformat()
+                }
+            ),
+            company_id=company_id
+        )
+        
+        # Update connection with actual data
+        await connection_manager.update_connection(
+            connection.id,
+            {
+                "record_count": len(records),
+                "status": ConnectionStatus.CONNECTED,
+                "error_message": None
+            }
+        )
+        
+        return ExcelUploadResponse(
+            connection_id=connection.id,
+            filename=file.filename,
+            stats=stats,
+            preview=records[:5],
+            total_rows=len(records),
+            status=ConnectionStatus.CONNECTED,
+            message=f"成功上传 {len(records)} 筆記錄"
+        )
         
     except HTTPException:
         raise

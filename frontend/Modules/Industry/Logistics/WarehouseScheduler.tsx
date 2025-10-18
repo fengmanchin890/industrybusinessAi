@@ -322,7 +322,14 @@ ${scheduleData.workloads.map(workload => `
       });
 
       try {
-        const result = JSON.parse(aiResponse.content);
+        // 使用 aiResponse.text 而不是 aiResponse.content
+        const responseText = aiResponse.text || aiResponse.content || '';
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+        
+        if (!result) {
+          throw new Error('No JSON found in response');
+        }
         
         // 創建優化後的班表
         const newShifts: Shift[] = result.shifts.map((shift: any, index: number) => ({

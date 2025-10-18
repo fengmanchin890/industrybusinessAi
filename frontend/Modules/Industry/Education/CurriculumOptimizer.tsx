@@ -442,18 +442,25 @@ ${course.assessment.assessments.map(assessment => `
       });
 
       try {
-        const analysis = JSON.parse(aiResponse.content);
+        // 使用 aiResponse.text 而不是 aiResponse.content
+        const responseText = aiResponse.text || aiResponse.content || '';
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        const analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+        
+        if (!analysis) {
+          throw new Error('No JSON found in response');
+        }
         
         const curriculumAnalysis: CurriculumAnalysis = {
           id: `CA${Date.now()}`,
           courseId: course.id,
-          overallScore: analysis.overallScore,
-          strengths: analysis.strengths,
-          weaknesses: analysis.weaknesses,
-          recommendations: analysis.recommendations,
-          alignmentScore: analysis.alignmentScore,
-          engagementScore: analysis.engagementScore,
-          difficultyScore: analysis.difficultyScore,
+          overallScore: analysis.overallScore || 75,
+          strengths: Array.isArray(analysis.strengths) ? analysis.strengths : ['課程結構完整'],
+          weaknesses: Array.isArray(analysis.weaknesses) ? analysis.weaknesses : ['需要進一步優化'],
+          recommendations: Array.isArray(analysis.recommendations) ? analysis.recommendations : ['持續優化課程內容'],
+          alignmentScore: analysis.alignmentScore || 80,
+          engagementScore: analysis.engagementScore || 75,
+          difficultyScore: analysis.difficultyScore || 70,
           generatedAt: new Date()
         };
 

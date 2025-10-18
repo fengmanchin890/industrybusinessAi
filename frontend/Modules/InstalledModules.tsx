@@ -1,7 +1,7 @@
 import React, { useEffect, useState, lazy, Suspense } from 'react';
 import { useAuth } from '../Contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Power, Settings, Trash2, Play } from 'lucide-react';
+import { Power, Settings, Trash2, Play, X } from 'lucide-react';
 import * as Icons from 'lucide-react';
 
 interface InstalledModule {
@@ -22,6 +22,7 @@ export function InstalledModules() {
   const [modules, setModules] = useState<InstalledModule[]>([]);
   const [loading, setLoading] = useState(true);
   const [runningModule, setRunningModule] = useState<string | null>(null);
+  const [settingsModule, setSettingsModule] = useState<string | null>(null);
   const ModuleRunner = lazy(() => import('./ModuleRunner').then(m => ({ default: m.ModuleRunner })));
 
   useEffect(() => {
@@ -95,6 +96,14 @@ export function InstalledModules() {
     }
   };
 
+  const openSettings = (moduleId: string) => {
+    setSettingsModule(moduleId);
+  };
+
+  const closeSettings = () => {
+    setSettingsModule(null);
+  };
+
   const getIconComponent = (iconName: string) => {
     const Icon = (Icons as any)[iconName.charAt(0).toUpperCase() + iconName.slice(1).replace(/-([a-z])/g, (_, char) => char.toUpperCase())];
     return Icon || Icons.Box;
@@ -119,6 +128,78 @@ export function InstalledModules() {
 
   return (
     <div className="space-y-4">
+      {/* Settings Dialog */}
+      {settingsModule && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">模組設定</h3>
+                <p className="text-sm text-slate-600 mt-1">
+                  {modules.find(m => m.id === settingsModule)?.module.name}
+                </p>
+              </div>
+              <button
+                onClick={closeSettings}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6">
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    模組狀態
+                  </label>
+                  <p className="text-sm text-slate-600">
+                    目前此模組{modules.find(m => m.id === settingsModule)?.is_enabled ? '已啟用' : '已停用'}
+                  </p>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    安裝時間
+                  </label>
+                  <p className="text-sm text-slate-600">
+                    {new Date(modules.find(m => m.id === settingsModule)?.installed_at || '').toLocaleString('zh-TW')}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    模組類別
+                  </label>
+                  <p className="text-sm text-slate-600">
+                    {modules.find(m => m.id === settingsModule)?.module.category}
+                  </p>
+                </div>
+
+                <div className="pt-4 border-t border-slate-200">
+                  <p className="text-sm text-slate-500">
+                    💡 更多進階設定功能即將推出
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="sticky bottom-0 bg-slate-50 px-6 py-4 border-t border-slate-200 flex justify-end gap-3">
+              <button
+                onClick={closeSettings}
+                className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors"
+              >
+                關閉
+              </button>
+              <button
+                onClick={closeSettings}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                確定
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {runningModule && (
         <div className="bg-white rounded-xl border border-slate-200 p-4">
           {(() => {
@@ -126,7 +207,11 @@ export function InstalledModules() {
             if (!mod) return null;
             return (
               <Suspense fallback={<div className="p-4 text-slate-600">載入模組中...</div>}>
-                <ModuleRunner moduleName={mod.module.name} onClose={() => setRunningModule(null)} />
+                <ModuleRunner 
+                  moduleName={mod.module.name} 
+                  moduleId={mod.module_id}
+                  onClose={() => setRunningModule(null)} 
+                />
               </Suspense>
             );
           })()}
@@ -187,6 +272,7 @@ export function InstalledModules() {
                 </button>
 
                 <button
+                  onClick={() => openSettings(item.id)}
                   className="p-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors"
                   title="設定"
                 >

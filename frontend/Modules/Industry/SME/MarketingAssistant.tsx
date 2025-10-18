@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ModuleBase, ModuleContext } from '../../ModuleSDK';
 import { useAuth } from '../../../Contexts/AuthContext';
 import { supabase } from '../../../lib/supabase';
-import { generateText } from '../../../lib/ai-service';
+import { aiAdapter } from '../../../lib/ai-adapter';
 
 function MarketingAssistantView({ context }: { context: ModuleContext }) {
   const { company } = useAuth();
@@ -72,13 +72,23 @@ function MarketingAssistantView({ context }: { context: ModuleContext }) {
         prompt = `為「${name}」撰寫${currentSeason}限定貼文。請強調當季食材、特色料理和季節氛圍。`;
       }
       
-      const aiResponse = await generateText(prompt, {
-        systemPrompt,
-        maxTokens: 500,
-        temperature: 0.8
+      // Use unified AI Adapter with auto model selection and caching
+      const aiResponse = await aiAdapter.generate(prompt, {
+        provider: 'auto',  // Auto-select best model based on company settings
+        caching: true,     // Enable caching to save costs
+        fallback: true,    // Fallback to cheaper model on error
+        priority: 'balanced'  // Balance between cost, speed, and quality
       });
       
       setPreview(aiResponse.content);
+      
+      // Log usage info
+      console.log(`✓ Generated content using ${aiResponse.model} in ${aiResponse.latency_ms}ms`);
+      console.log(`💰 Cost: $${aiResponse.usage?.cost_usd?.toFixed(4) || '0.00'}`);
+      console.log(`📊 Tokens: ${aiResponse.usage?.total_tokens || 0}`);
+      if (aiResponse.cached) {
+        console.log('⚡ Served from cache - no cost!');
+      }
     } catch (error) {
       console.error('Generate error:', error);
       // 如果 AI 服務失敗，使用備用模板

@@ -198,205 +198,355 @@ export function LearningAssistantModule({ context }: { context: ModuleContext })
   }, [company?.id]);
 
   const loadData = async () => {
+    if (!company?.id) return;
+    
     try {
+      // 載入學生數據
+      const { data: studentsData, error: studentsError } = await supabase
+        .from('students')
+        .select('*')
+        .eq('company_id', company.id)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false });
+
+      if (studentsError) throw studentsError;
+
+      // 載入學習路徑
+      const { data: pathsData, error: pathsError } = await supabase
+        .from('learning_paths')
+        .select(`
+          *,
+          learning_milestones(*)
+        `)
+        .eq('company_id', company.id)
+        .eq('status', 'active')
+        .order('created_at', { ascending: false });
+
+      if (pathsError) throw pathsError;
+
+      // 載入學習會話（最近的）
+      const { data: sessionsData, error: sessionsError } = await supabase
+        .from('learning_sessions')
+        .select('*')
+        .eq('company_id', company.id)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (sessionsError) throw sessionsError;
+
+      // 轉換數據格式
+      const formattedStudents: Student[] = studentsData?.map(s => ({
+        id: s.id,
+        name: s.name,
+        grade: s.grade || '未設定',
+        subject: s.subjects?.[0] || '未設定',
+        learningLevel: s.learning_level as any || 'intermediate',
+        learningStyle: s.learning_style as any || 'visual',
+        strengths: s.strengths || [],
+        weaknesses: s.weaknesses || [],
+        goals: s.goals || [],
+        lastActive: new Date(s.last_active_at || s.updated_at)
+      })) || [];
+
+      const formattedPaths: LearningPath[] = pathsData?.map(p => ({
+        id: p.id,
+        studentId: p.student_id,
+        subject: p.subject,
+        currentLevel: p.current_level,
+        targetLevel: p.target_level,
+        progress: p.progress_percentage,
+        estimatedCompletion: new Date(p.estimated_completion_date || p.target_completion_date),
+        milestones: (p.learning_milestones || []).map((m: any) => ({
+          id: m.id,
+          title: m.title,
+          description: m.description || '',
+          skills: m.skills || [],
+          completed: m.is_completed,
+          completedAt: m.completion_date ? new Date(m.completion_date) : undefined
+        }))
+      })) || [];
+
+      setStudents(formattedStudents);
+      setLearningPaths(formattedPaths);
+
+      // 計算統計數據
+      const avgAccuracy = sessionsData?.reduce((sum, s) => sum + (s.accuracy_rate || 0), 0) / (sessionsData?.length || 1);
+      const completedMilestones = pathsData?.reduce((sum, p) => sum + (p.completed_milestones || 0), 0) || 0;
+      const totalMilestones = pathsData?.reduce((sum, p) => sum + (p.total_milestones || 1), 0) || 1;
+
+      setStats({
+        totalStudents: formattedStudents.length,
+        activeSessions: sessionsData?.filter(s => s.status === 'active').length || 0,
+        avgPerformance: Math.round(avgAccuracy || 0),
+        completionRate: Math.round((completedMilestones / totalMilestones) * 100)
+      });
+    } catch (error) {
+      console.error('載入學習數據失敗:', error);
+      // 降級使用 Mock Data
       setStudents(mockStudents);
       setLearningPaths(mockLearningPaths);
-      
       setStats({
         totalStudents: mockStudents.length,
         activeSessions: 1,
         avgPerformance: 78,
         completionRate: 65
       });
-    } catch (error) {
-      console.error('載入學習數據失敗:', error);
     }
   };
 
   const startLearningSession = async (student: Student, topic: string) => {
     setRunning();
     
-    try {
-      // 使用 AI 生成學習內容
-      const systemPrompt = `你是一個專業的教育 AI 助教，專門為台灣學生提供個人化學習輔導。請根據學生的學習風格和能力水平，設計適合的學習內容和問題。`;
-      
-      const prompt = `
-請為以下學生設計學習內容：
-
-學生資訊：
-- 姓名：${student.name}
-- 年級：${student.grade}
-- 科目：${student.subject}
-- 學習水平：${student.learningLevel === 'beginner' ? '初級' :
-             student.learningLevel === 'intermediate' ? '中級' : '高級'}
-- 學習風格：${student.learningStyle === 'visual' ? '視覺型' :
-             student.learningStyle === 'auditory' ? '聽覺型' :
-             student.learningStyle === 'kinesthetic' ? '動覺型' : '閱讀型'}
-- 強項：${student.strengths.join(', ')}
-- 弱項：${student.weaknesses.join(', ')}
-- 學習目標：${student.goals.join(', ')}
-
-學習主題：${topic}
-
-請設計：
-1. 學習內容說明
-2. 3-5個練習題目
-3. 學習建議
-4. 後續學習方向
-
-請以 JSON 格式回應：
-{
-  "content": "學習內容說明",
-  "questions": [
-    {
-      "content": "題目內容",
-      "type": "multiple_choice/short_answer/essay/problem_solving",
-      "difficulty": "easy/medium/hard",
-      "options": ["選項1", "選項2", "選項3", "選項4"],
-      "correctAnswer": "正確答案",
-      "explanation": "解答說明"
+    if (!company?.id) {
+      await sendAlert('warning', '無法開始學習', '找不到公司資訊');
+      setIdle();
+      return;
     }
-  ],
-  "suggestions": ["建議1", "建議2"],
-  "nextSteps": ["下一步1", "下一步2"]
-}
-      `;
-
-      const aiResponse = await generateText(prompt, {
-        systemPrompt,
-        maxTokens: 2000,
-        temperature: 0.7
+    
+    try {
+      // 使用 Edge Function 生成問題
+      const { data: questionData, error: questionError } = await supabase.functions.invoke('teaching-assistant-ai', {
+        body: {
+          action: 'generate_question',
+          data: {
+            subject: student.subject,
+            topic: topic,
+            difficulty: student.learningLevel === 'beginner' ? 'easy' : 
+                       student.learningLevel === 'advanced' ? 'hard' : 'medium',
+            questionType: 'multiple_choice',
+            count: 3
+          }
+        }
       });
 
-      try {
-        const sessionData = JSON.parse(aiResponse.content);
-        
-        const newSession: LearningSession = {
-          id: `LS${Date.now()}`,
-          studentId: student.id,
-          subject: student.subject,
-          topic,
-          duration: 0,
-          startTime: new Date(),
-          endTime: new Date(),
-          questions: sessionData.questions.map((q: any, index: number) => ({
-            id: `Q${Date.now()}_${index}`,
-            content: q.content,
-            type: q.type,
-            difficulty: q.difficulty,
-            correctAnswer: q.correctAnswer,
-            explanation: q.explanation
-          })),
-          performance: {
-            accuracy: 0,
-            speed: 0,
-            confidence: 0,
-            improvement: 0,
-            knowledgeGaps: []
-          },
-          aiFeedback: sessionData.content
-        };
+      if (questionError) throw questionError;
 
-        setCurrentSession(newSession);
-        setSessions(prev => [newSession, ...prev]);
-        
-        await sendAlert('info', '學習課程開始', `為 ${student.name} 開始 ${topic} 學習課程`);
-        
-      } catch (parseError) {
-        console.error('AI 學習內容解析失敗:', parseError);
-        
-        // 備用學習內容
-        const fallbackSession: LearningSession = {
-          id: `LS${Date.now()}`,
-          studentId: student.id,
+      const questions = questionData?.questions || [];
+      
+      // 創建學習會話記錄到資料庫
+      const { data: sessionRecord, error: sessionError } = await supabase
+        .from('learning_sessions')
+        .insert({
+          company_id: company.id,
+          student_id: student.id,
+          session_code: `SES${Date.now()}`,
           subject: student.subject,
-          topic,
-          duration: 0,
-          startTime: new Date(),
-          endTime: new Date(),
-          questions: [
-            {
-              id: `Q${Date.now()}_1`,
-              content: `請解釋 ${topic} 的基本概念`,
-              type: 'short_answer',
-              difficulty: 'medium',
-              correctAnswer: '基本概念說明',
-              explanation: '這是該主題的核心概念'
-            }
-          ],
-          performance: {
-            accuracy: 0,
-            speed: 0,
-            confidence: 0,
-            improvement: 0,
-            knowledgeGaps: []
-          },
-          aiFeedback: `讓我們開始學習 ${topic}，這是一個重要的主題。`
-        };
+          topic: topic,
+          start_time: new Date().toISOString(),
+          status: 'active',
+          ai_difficulty_level: student.learningLevel === 'beginner' ? 'easy' : 
+                               student.learningLevel === 'advanced' ? 'hard' : 'medium'
+        })
+        .select()
+        .single();
 
-        setCurrentSession(fallbackSession);
-        setSessions(prev => [fallbackSession, ...prev]);
-      }
+      if (sessionError) throw sessionError;
+
+      // 轉換為前端格式
+      const newSession: LearningSession = {
+        id: sessionRecord.id,
+        studentId: student.id,
+        subject: student.subject,
+        topic,
+        duration: 0,
+        startTime: new Date(sessionRecord.start_time),
+        endTime: new Date(),
+        questions: questions.map((q: any, index: number) => ({
+          id: `Q${Date.now()}_${index}`,
+          content: q.question_text || q.content || '問題',
+          type: q.question_type || 'short_answer',
+          difficulty: q.difficulty || 'medium',
+          correctAnswer: q.correct_answer || q.correctAnswer || '',
+          explanation: q.explanation || ''
+        })),
+        performance: {
+          accuracy: 0,
+          speed: 0,
+          confidence: 0,
+          improvement: 0,
+          knowledgeGaps: []
+        },
+        aiFeedback: '學習會話已開始，加油！'
+      };
+
+      setCurrentSession(newSession);
+      setSessions(prev => [newSession, ...prev]);
+      
+      await sendAlert('info', '學習課程開始', `為 ${student.name} 開始 ${topic} 學習課程`);
+      setIdle();
       
     } catch (error) {
       console.error('學習課程生成失敗:', error);
       await sendAlert('warning', '學習課程生成失敗', '無法生成學習內容，請稍後再試');
+      setIdle();
     }
   };
 
   const submitAnswer = async (questionId: string, answer: string) => {
-    if (!currentSession) return;
+    if (!currentSession || !company?.id) return;
 
     const question = currentSession.questions.find(q => q.id === questionId);
     if (!question) return;
 
-    const isCorrect = answer.toLowerCase().includes(question.correctAnswer.toLowerCase()) || 
-                     answer === question.correctAnswer;
+    try {
+      // 使用 Edge Function 分析答案
+      const { data: analysisData, error: analysisError } = await supabase.functions.invoke('teaching-assistant-ai', {
+        body: {
+          action: 'analyze_answer',
+          data: {
+            questionText: question.content,
+            correctAnswer: question.correctAnswer,
+            studentAnswer: answer,
+            subject: currentSession.subject,
+            topic: currentSession.topic
+          }
+        }
+      });
 
-    // 更新問題答案
-    const updatedQuestions = currentSession.questions.map(q =>
-      q.id === questionId ? { ...q, studentAnswer: answer, isCorrect } : q
-    );
+      if (analysisError) throw analysisError;
 
-    const updatedSession = {
-      ...currentSession,
-      questions: updatedQuestions
-    };
+      const analysis = analysisData?.analysis || {};
+      const isCorrect = analysis.is_correct !== undefined ? analysis.is_correct :
+                       answer.toLowerCase().includes(question.correctAnswer.toLowerCase());
 
-    setCurrentSession(updatedSession);
-    setSessions(prev => prev.map(s => s.id === currentSession.id ? updatedSession : s));
+      // 儲存問題答案到資料庫
+      await supabase
+        .from('learning_questions')
+        .insert({
+          company_id: company.id,
+          session_id: currentSession.id,
+          student_id: currentSession.studentId,
+          question_type: question.type,
+          subject: currentSession.subject,
+          topic: currentSession.topic,
+          difficulty: question.difficulty,
+          question_text: question.content,
+          correct_answer: question.correctAnswer,
+          student_answer: answer,
+          is_correct: isCorrect,
+          explanation: question.explanation,
+          ai_analysis: analysis.analysis || analysis.feedback,
+          ai_error_type: analysis.error_type
+        });
 
-    // 提供即時反饋
-    if (isCorrect) {
-      await sendAlert('success', '回答正確！', '很好！你答對了這個問題');
-    } else {
-      await sendAlert('info', '需要改進', '答案不完全正確，請參考解釋');
+      // 更新問題答案
+      const updatedQuestions = currentSession.questions.map(q =>
+        q.id === questionId ? { ...q, studentAnswer: answer, isCorrect } : q
+      );
+
+      const updatedSession = {
+        ...currentSession,
+        questions: updatedQuestions
+      };
+
+      setCurrentSession(updatedSession);
+      setSessions(prev => prev.map(s => s.id === currentSession.id ? updatedSession : s));
+
+      // 提供 AI 反饋
+      if (isCorrect) {
+        await sendAlert('success', '回答正確！', analysis.feedback || '很好！你答對了這個問題');
+      } else {
+        await sendAlert('info', '需要改進', analysis.feedback || '答案不完全正確，請參考解釋');
+      }
+    } catch (error) {
+      console.error('答案分析失敗:', error);
+      // 降級使用簡單判斷
+      const isCorrect = answer.toLowerCase().includes(question.correctAnswer.toLowerCase());
+      const updatedQuestions = currentSession.questions.map(q =>
+        q.id === questionId ? { ...q, studentAnswer: answer, isCorrect } : q
+      );
+      const updatedSession = {
+        ...currentSession,
+        questions: updatedQuestions
+      };
+      setCurrentSession(updatedSession);
+      setSessions(prev => prev.map(s => s.id === currentSession.id ? updatedSession : s));
+      
+      if (isCorrect) {
+        await sendAlert('success', '回答正確！', '很好！你答對了這個問題');
+      } else {
+        await sendAlert('info', '需要改進', '答案不完全正確，請參考解釋');
+      }
     }
   };
 
   const completeSession = async () => {
-    if (!currentSession) return;
+    if (!currentSession || !company?.id) return;
 
     const correctAnswers = currentSession.questions.filter(q => q.isCorrect).length;
     const accuracy = (correctAnswers / currentSession.questions.length) * 100;
+    const durationMinutes = Math.floor((Date.now() - currentSession.startTime.getTime()) / 1000 / 60);
     
-    const completedSession = {
-      ...currentSession,
-      endTime: new Date(),
-      duration: Math.floor((Date.now() - currentSession.startTime.getTime()) / 1000 / 60),
-      performance: {
-        ...currentSession.performance,
-        accuracy,
-        speed: currentSession.questions.length / (Math.floor((Date.now() - currentSession.startTime.getTime()) / 1000 / 60)),
-        confidence: accuracy > 80 ? 90 : accuracy > 60 ? 70 : 50
-      }
-    };
+    try {
+      // 更新資料庫中的會話記錄
+      await supabase
+        .from('learning_sessions')
+        .update({
+          end_time: new Date().toISOString(),
+          duration_minutes: durationMinutes,
+          questions_attempted: currentSession.questions.length,
+          questions_correct: correctAnswers,
+          accuracy_rate: accuracy,
+          status: 'completed',
+          ai_engagement_score: accuracy > 80 ? 90 : accuracy > 60 ? 70 : 50,
+          ai_comprehension_score: Math.round(accuracy)
+        })
+        .eq('id', currentSession.id);
 
-    setSessions(prev => prev.map(s => s.id === currentSession.id ? completedSession : s));
-    setCurrentSession(null);
-    setIdle();
+      // 請求 AI 回饋
+      const { data: feedbackData } = await supabase.functions.invoke('teaching-assistant-ai', {
+        body: {
+          action: 'provide_feedback',
+          data: {
+            studentId: currentSession.studentId,
+            sessionId: currentSession.id
+          }
+        }
+      });
 
-    await sendAlert('success', '學習課程完成', `學習課程完成，準確率：${accuracy.toFixed(1)}%`);
+      const aiFeedback = feedbackData?.feedback?.overall_feedback || 
+                        `學習課程完成！準確率：${accuracy.toFixed(1)}%。繼續保持努力！`;
+
+      const completedSession = {
+        ...currentSession,
+        endTime: new Date(),
+        duration: durationMinutes,
+        performance: {
+          ...currentSession.performance,
+          accuracy,
+          speed: currentSession.questions.length / (durationMinutes || 1),
+          confidence: accuracy > 80 ? 90 : accuracy > 60 ? 70 : 50
+        },
+        aiFeedback
+      };
+
+      setSessions(prev => prev.map(s => s.id === currentSession.id ? completedSession : s));
+      setCurrentSession(null);
+      setIdle();
+
+      await sendAlert('success', '學習課程完成', aiFeedback);
+      
+      // 重新載入數據以更新統計
+      loadData();
+    } catch (error) {
+      console.error('完成會話失敗:', error);
+      // 降級處理
+      const completedSession = {
+        ...currentSession,
+        endTime: new Date(),
+        duration: durationMinutes,
+        performance: {
+          ...currentSession.performance,
+          accuracy,
+          speed: currentSession.questions.length / (durationMinutes || 1),
+          confidence: accuracy > 80 ? 90 : accuracy > 60 ? 70 : 50
+        }
+      };
+      setSessions(prev => prev.map(s => s.id === currentSession.id ? completedSession : s));
+      setCurrentSession(null);
+      setIdle();
+      await sendAlert('success', '學習課程完成', `學習課程完成，準確率：${accuracy.toFixed(1)}%`);
+    }
   };
 
   const generateLearningReport = async () => {

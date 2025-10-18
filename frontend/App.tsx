@@ -7,8 +7,9 @@ import { Overview } from './DashBoard/Overview';
 import { ModulesView } from './Modules/ModuleView';
 import { ReportsView } from './Reports/ReporsView';
 import { AlertsView } from './src/components/Alerts/AlertsView';
-import { SettingsView } from './Setting/Settingviews';
+import { SettingsView } from './Setting/SettingViews';
 import { MobileOptimization } from './src/components/Mobile/MobileOptimization';
+import { IntegratedDashboard } from './Modules/Industry/IntegratedDashboard';
 import { Building2, AlertTriangle, RefreshCw } from 'lucide-react';
 
 // 错误边界组件
@@ -127,6 +128,7 @@ function Dashboard() {
     const viewComponents = {
       overview: <Overview />,
       modules: <ModulesView />,
+      integrated: <IntegratedDashboard />,
       reports: <ReportsView />,
       alerts: <AlertsView />,
       settings: <SettingsView />,

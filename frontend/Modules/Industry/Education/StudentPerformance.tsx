@@ -304,30 +304,160 @@ export function StudentPerformanceModule({ context }: { context: ModuleContext }
   }, [company?.id]);
 
   const loadStudents = async () => {
+    if (!company?.id) return;
+
     try {
-      setStudents(mockStudents);
-      
-      // 計算班級統計
-      const totalStudents = mockStudents.length;
-      const averageScore = mockStudents.reduce((sum, s) => sum + s.performance.overallScore, 0) / totalStudents;
-      const attendanceRate = mockStudents.reduce((sum, s) => sum + s.performance.attendanceRate, 0) / totalStudents;
-      const topPerformers = mockStudents
-        .filter(s => s.performance.overallScore >= 90)
-        .map(s => s.name);
-      const atRiskStudents = mockStudents
-        .filter(s => s.performance.overallScore < 75 || s.performance.trend === 'declining')
-        .map(s => s.name);
-      
-      setClassStats({
-        totalStudents,
-        averageScore: Math.round(averageScore),
-        attendanceRate: Math.round(attendanceRate),
-        topPerformers,
-        atRiskStudents
-      });
+      // 載入學生基本資料
+      const { data: studentsData, error: studentsError } = await supabase
+        .from('students')
+        .select('*')
+        .eq('company_id', company.id)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false });
+
+      if (studentsError) throw studentsError;
+
+      if (!studentsData || studentsData.length === 0) {
+        // 使用 Mock Data
+        setStudents(mockStudents);
+        calculateClassStats(mockStudents);
+        return;
+      }
+
+      // 為每個學生載入表現數據
+      const studentsWithPerformance = await Promise.all(
+        studentsData.map(async (student) => {
+          // 取得統計數據
+          const { data: statsData } = await supabase.rpc('get_student_performance_stats', {
+            p_student_id: student.id
+          });
+
+          const stats = statsData?.[0] || {
+            overall_score: 0,
+            attendance_rate: 0,
+            homework_completion_rate: 0,
+            participation_score: 0,
+            active_alerts: 0,
+            performance_trend: 'stable'
+          };
+
+          // 取得成績分科數據
+          const { data: gradesData } = await supabase
+            .from('student_grades')
+            .select('subject, percentage, ai_strengths, ai_weaknesses, ai_recommendations')
+            .eq('student_id', student.id)
+            .order('assessment_date', { ascending: false })
+            .limit(20);
+
+          // 計算各科平均
+          const subjectScores: SubjectScore[] = [];
+          const subjectMap = new Map<string, { scores: number[], strengths: Set<string>, weaknesses: Set<string>, recommendations: Set<string> }>();
+
+          gradesData?.forEach(grade => {
+            if (!subjectMap.has(grade.subject)) {
+              subjectMap.set(grade.subject, {
+                scores: [],
+                strengths: new Set(),
+                weaknesses: new Set(),
+                recommendations: new Set()
+              });
+            }
+            const subj = subjectMap.get(grade.subject)!;
+            subj.scores.push(parseFloat(grade.percentage));
+            grade.ai_strengths?.forEach(s => subj.strengths.add(s));
+            grade.ai_weaknesses?.forEach(w => subj.weaknesses.add(w));
+            grade.ai_recommendations?.forEach(r => subj.recommendations.add(r));
+          });
+
+          subjectMap.forEach((data, subject) => {
+            const avgScore = data.scores.reduce((a, b) => a + b, 0) / data.scores.length;
+            const recentAvg = data.scores.slice(0, Math.ceil(data.scores.length / 2)).reduce((a, b) => a + b, 0) / Math.ceil(data.scores.length / 2);
+            const olderAvg = data.scores.slice(Math.ceil(data.scores.length / 2)).reduce((a, b) => a + b, 0) / Math.floor(data.scores.length / 2);
+            
+            subjectScores.push({
+              subject,
+              score: Math.round(avgScore),
+              trend: recentAvg > olderAvg + 3 ? 'improving' : recentAvg < olderAvg - 3 ? 'declining' : 'stable',
+              strengths: Array.from(data.strengths),
+              weaknesses: Array.from(data.weaknesses),
+              recommendations: Array.from(data.recommendations)
+            });
+          });
+
+          // 取得警示
+          const { data: alertsData } = await supabase
+            .from('performance_alerts')
+            .select('*')
+            .eq('student_id', student.id)
+            .eq('status', 'active')
+            .order('created_at', { ascending: false });
+
+          return {
+            id: student.id,
+            name: student.name,
+            grade: student.grade || '',
+            class: student.class_name || '',
+            studentId: student.student_code,
+            performance: {
+              overallScore: Math.round(parseFloat(stats.overall_score) || 0),
+              subjectScores,
+              attendanceRate: Math.round(parseFloat(stats.attendance_rate) || 0),
+              homeworkCompletion: Math.round(parseFloat(stats.homework_completion_rate) || 0),
+              participationScore: Math.round(parseFloat(stats.participation_score) || 0),
+              trend: stats.performance_trend as any,
+              lastUpdated: new Date()
+            },
+            learningProfile: {
+              learningStyle: student.learning_style as any || 'visual',
+              strengths: student.strengths || [],
+              challenges: student.weaknesses || [],
+              interests: student.interests || [],
+              goals: student.goals || [],
+              studyHabits: []
+            },
+            alerts: alertsData?.map(alert => ({
+              id: alert.id,
+              studentId: alert.student_id,
+              type: alert.alert_type as any,
+              severity: alert.severity as any,
+              message: alert.message,
+              recommendations: alert.ai_recommendations || [],
+              createdAt: new Date(alert.created_at),
+              status: alert.status as any
+            })) || []
+          };
+        })
+      );
+
+      setStudents(studentsWithPerformance);
+      calculateClassStats(studentsWithPerformance);
+
     } catch (error) {
       console.error('載入學生數據失敗:', error);
+      // 降級使用 Mock Data
+      setStudents(mockStudents);
+      calculateClassStats(mockStudents);
     }
+  };
+
+  const calculateClassStats = (students: Student[]) => {
+    const totalStudents = students.length;
+    const averageScore = students.reduce((sum, s) => sum + s.performance.overallScore, 0) / totalStudents;
+    const attendanceRate = students.reduce((sum, s) => sum + s.performance.attendanceRate, 0) / totalStudents;
+    const topPerformers = students
+      .filter(s => s.performance.overallScore >= 90)
+      .map(s => s.name);
+    const atRiskStudents = students
+      .filter(s => s.performance.overallScore < 75 || s.performance.trend === 'declining')
+      .map(s => s.name);
+    
+    setClassStats({
+      totalStudents,
+      averageScore: Math.round(averageScore),
+      attendanceRate: Math.round(attendanceRate),
+      topPerformers,
+      atRiskStudents
+    });
   };
 
   const analyzeStudent = async (student: Student) => {
@@ -335,122 +465,101 @@ export function StudentPerformanceModule({ context }: { context: ModuleContext }
     setSelectedStudent(student);
     setRunning();
     
-    try {
-      // 使用 AI 分析學生表現
-      const systemPrompt = `你是一個專業的教育心理學家，專門分析學生學習表現並提供個人化建議。請根據學生數據進行全面分析。`;
-      
-      const prompt = `
-請分析以下學生的學習表現：
-
-學生姓名：${student.name}
-年級：${student.grade}
-班級：${student.class}
-整體成績：${student.performance.overallScore}/100
-出席率：${student.performance.attendanceRate}%
-作業完成率：${student.performance.homeworkCompletion}%
-參與度：${student.performance.participationScore}/100
-學習趨勢：${student.performance.trend === 'improving' ? '進步中' :
-           student.performance.trend === 'stable' ? '穩定' : '下降中'}
-
-各科成績：
-${student.performance.subjectScores.map(subject => `
-- ${subject.subject}: ${subject.score}/100 (${subject.trend === 'improving' ? '進步' :
-  subject.trend === 'stable' ? '穩定' : '下降'})
-  優點: ${subject.strengths.join(', ')}
-  弱點: ${subject.weaknesses.join(', ')}
-`).join('')}
-
-學習特質：
-- 學習風格: ${student.learningProfile.learningStyle === 'visual' ? '視覺型' :
-             student.learningProfile.learningStyle === 'auditory' ? '聽覺型' :
-             student.learningProfile.learningStyle === 'kinesthetic' ? '動覺型' : '閱讀型'}
-- 優點: ${student.learningProfile.strengths.join(', ')}
-- 挑戰: ${student.learningProfile.challenges.join(', ')}
-- 興趣: ${student.learningProfile.interests.join(', ')}
-- 目標: ${student.learningProfile.goals.join(', ')}
-- 學習習慣: ${student.learningProfile.studyHabits.join(', ')}
-
-請提供：
-1. 整體表現評估
-2. 各科詳細分析
-3. 學習建議
-4. 家長溝通要點
-5. 預警指標
-
-請以 JSON 格式回應：
-{
-  "overallAssessment": "整體評估",
-  "subjectAnalysis": [
-    {
-      "subject": "科目名稱",
-      "assessment": "科目評估",
-      "strengths": ["優點1", "優點2"],
-      "weaknesses": ["弱點1", "弱點2"],
-      "recommendations": ["建議1", "建議2"]
+    if (!company?.id) {
+      await sendAlert('warning', '無法分析', '找不到公司資訊');
+      setAnalyzing(false);
+      setIdle();
+      return;
     }
-  ],
-  "learningRecommendations": ["建議1", "建議2"],
-  "parentCommunication": ["溝通要點1", "溝通要點2"],
-  "warningIndicators": ["預警1", "預警2"],
-  "nextSteps": ["下一步1", "下一步2"]
-}
-      `;
-
-      const aiResponse = await generateText(prompt, {
-        systemPrompt,
-        maxTokens: 1500,
-        temperature: 0.3
+    
+    try {
+      // 使用 Edge Function 進行 AI 分析
+      const { data: analysisData, error: analysisError } = await supabase.functions.invoke('student-performance-analyzer', {
+        body: {
+          action: 'analyze_performance',
+          data: {
+            studentId: student.id,
+            startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            endDate: new Date().toISOString().split('T')[0]
+          }
+        }
       });
 
-      try {
-        const analysis = JSON.parse(aiResponse.content);
-        
-        // 更新學生分析結果
-        const updatedStudent = {
-          ...student,
-          aiAnalysis: analysis,
-          lastAnalyzed: new Date()
-        };
+      if (analysisError) throw analysisError;
 
-        setStudents(prev => prev.map(s => 
-          s.id === student.id ? updatedStudent : s
-        ));
-
-        await sendAlert('info', '學生分析完成', `學生「${student.name}」的分析已完成`);
-        
-      } catch (parseError) {
-        console.error('AI 分析結果解析失敗:', parseError);
-        
-        // 備用分析結果
-        const fallbackAnalysis = {
-          overallAssessment: '需要進一步觀察和輔導',
-          subjectAnalysis: student.performance.subjectScores.map(subject => ({
-            subject: subject.subject,
-            assessment: '需要持續關注',
-            strengths: subject.strengths,
-            weaknesses: subject.weaknesses,
-            recommendations: subject.recommendations
-          })),
-          learningRecommendations: ['持續關注學習狀況', '提供適當輔導'],
-          parentCommunication: ['定期溝通學習狀況'],
-          warningIndicators: ['成績需要關注'],
-          nextSteps: ['持續監控', '提供支援']
-        };
-
-        const updatedStudent = {
-          ...student,
-          aiAnalysis: fallbackAnalysis,
-          lastAnalyzed: new Date()
-        };
-
-        setStudents(prev => prev.map(s => 
-          s.id === student.id ? updatedStudent : s
-        ));
+      // 檢查返回的數據是否有效
+      if (!analysisData || !analysisData.analysis) {
+        throw new Error('Edge Function 返回數據格式無效');
       }
+
+      // 轉換分析結果格式
+      const analysis = {
+        overallAssessment: analysisData.analysis.summary || '分析中...',
+        subjectAnalysis: student.performance.subjectScores.map(subject => ({
+          subject: subject.subject,
+          assessment: `平均成績: ${subject.score}/100`,
+          strengths: subject.strengths,
+          weaknesses: subject.weaknesses,
+          recommendations: subject.recommendations
+        })),
+        learningRecommendations: analysisData.analysis.recommendations || [],
+        parentCommunication: [
+          `學生整體表現${analysisData.analysis.trend === 'improving' ? '進步中' : analysisData.analysis.trend === 'declining' ? '下降中' : '穩定'}`,
+          `建議定期關注學生學習狀況`
+        ],
+        warningIndicators: analysisData.analysis.risk_level === 'high' ? ['高風險學生，需要立即關注'] : 
+                           analysisData.analysis.risk_level === 'medium' ? ['中度風險，需要持續關注'] : 
+                           [],
+        nextSteps: analysisData.analysis.next_steps || []
+      };
+      
+      // 更新學生分析結果
+      const updatedStudent = {
+        ...student,
+        aiAnalysis: analysis,
+        lastAnalyzed: new Date()
+      };
+
+      setStudents(prev => prev.map(s => 
+        s.id === student.id ? updatedStudent : s
+      ));
+
+      await sendAlert('info', '學生分析完成', `學生「${student.name}」的分析已完成`);
       
     } catch (error) {
       console.error('學生分析失敗:', error);
-      await sendAlert('warning', '分析失敗', '無法完成學生分析，請手動處理');
+      
+      // 降級：使用簡單分析
+      const fallbackAnalysis = {
+        overallAssessment: `${student.name} 的整體表現${
+          student.performance.overallScore >= 80 ? '優秀' : 
+          student.performance.overallScore >= 70 ? '良好' : 
+          student.performance.overallScore >= 60 ? '及格' : '需要改進'
+        }，平均成績 ${student.performance.overallScore}/100。`,
+        subjectAnalysis: student.performance.subjectScores.map(subject => ({
+          subject: subject.subject,
+          assessment: `平均成績: ${subject.score}/100`,
+          strengths: subject.strengths,
+          weaknesses: subject.weaknesses,
+          recommendations: subject.recommendations
+        })),
+        learningRecommendations: ['持續關注學習狀況', '提供適當輔導'],
+        parentCommunication: ['定期溝通學習狀況', '鼓勵學生積極學習'],
+        warningIndicators: student.performance.overallScore < 60 ? ['成績不及格，需要立即介入'] : [],
+        nextSteps: ['持續監控', '提供支援']
+      };
+
+      const updatedStudent = {
+        ...student,
+        aiAnalysis: fallbackAnalysis,
+        lastAnalyzed: new Date()
+      };
+
+      setStudents(prev => prev.map(s => 
+        s.id === student.id ? updatedStudent : s
+      ));
+      
+      await sendAlert('warning', '分析完成（降級模式）', `學生「${student.name}」的分析已完成（使用基本分析）`);
     } finally {
       setAnalyzing(false);
       setIdle();

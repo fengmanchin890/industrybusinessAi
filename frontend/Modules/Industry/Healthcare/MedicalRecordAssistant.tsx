@@ -4,12 +4,11 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { FileText, Stethoscope, AlertTriangle, Clock, User, Calendar } from 'lucide-react';
+import { FileText, Stethoscope, AlertTriangle, Clock, User, Calendar, RefreshCw } from 'lucide-react';
 import { ModuleBase, ModuleMetadata, ModuleCapabilities, ModuleContext } from '../../ModuleSDK';
 import { useModuleState, useReportGeneration, useAlertSending } from '../../ModuleSDK';
-import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../Contexts/AuthContext';
-import { generateText, summarizeText } from '../../../lib/ai-service';
+import { medicalRecordService, type MedicalRecord as DBMedicalRecord, type AIAnalysis } from '../../../lib/medical-record-service';
 
 const metadata: ModuleMetadata = {
   id: 'medical-record-assistant',
@@ -81,15 +80,17 @@ interface AIAnalysis {
 }
 
 export function MedicalRecordAssistantModule({ context }: { context: ModuleContext }) {
-  const { state, setRunning } = useModuleState();
+  const { state, setRunning, setIdle } = useModuleState();
   const { generateReport } = useReportGeneration(context);
   const { sendAlert } = useAlertSending(context);
   const { company } = useAuth();
   
-  const [records, setRecords] = useState<MedicalRecord[]>([]);
-  const [selectedRecord, setSelectedRecord] = useState<MedicalRecord | null>(null);
+  const [records, setRecords] = useState<DBMedicalRecord[]>([]);
+  const [selectedRecord, setSelectedRecord] = useState<DBMedicalRecord | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<AIAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState({
     totalRecords: 0,
     analyzedToday: 0,
@@ -97,8 +98,41 @@ export function MedicalRecordAssistantModule({ context }: { context: ModuleConte
     accuracyRate: 0
   });
 
-  // 模擬病歷數據
-  const mockRecords: MedicalRecord[] = [
+  // 載入數據
+  useEffect(() => {
+    setRunning();
+    loadData();
+    return () => setIdle();
+  }, [context.companyId, setRunning, setIdle]);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // 並行載入病歷和統計數據
+      const [recordsData, statsData] = await Promise.all([
+        medicalRecordService.getMedicalRecords(context.companyId),
+        medicalRecordService.getStats(context.companyId)
+      ]);
+
+      setRecords(recordsData);
+      setStats({
+        totalRecords: statsData.total_records,
+        analyzedToday: statsData.analyzed_today,
+        avgAnalysisTime: statsData.avg_analysis_time,
+        accuracyRate: statsData.accuracy_rate
+      });
+    } catch (err) {
+      console.error('Error loading data:', err);
+      setError('載入數據失敗');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 舊的模擬數據（保留作為備用）
+  const mockRecords_BACKUP: any[] = [
     {
       id: '1',
       patientId: 'P001',
@@ -160,108 +194,43 @@ export function MedicalRecordAssistantModule({ context }: { context: ModuleConte
     }
   ];
 
-  useEffect(() => {
-    loadRecords();
-  }, [company?.id]);
-
-  const loadRecords = async () => {
-    try {
-      setRecords(mockRecords);
-      setStats({
-        totalRecords: mockRecords.length,
-        analyzedToday: 1,
-        avgAnalysisTime: 45,
-        accuracyRate: 92
-      });
-    } catch (error) {
-      console.error('載入病歷失敗:', error);
-    }
-  };
-
-  const analyzeRecord = async (record: MedicalRecord) => {
+  const analyzeRecord = async (record: DBMedicalRecord) => {
     setAnalyzing(true);
     setSelectedRecord(record);
+    setError(null);
     
     try {
-      // 使用 AI 分析病歷
-      const systemPrompt = `你是一個專業的醫療 AI 助理，專門協助醫師分析病歷。請根據病歷資訊提供專業的醫療分析，包括摘要、關鍵發現、風險評估和診斷建議。請用繁體中文回應。`;
+      // 先檢查是否已有分析結果
+      let existingAnalysis = await medicalRecordService.getAnalysis(record.id);
       
-      const prompt = `
-請分析以下病歷：
-
-患者：${record.patientName} (${record.patientAge}歲, ${record.patientGender === 'male' ? '男' : '女'})
-主訴：${record.chiefComplaint}
-症狀：${record.symptoms.join(', ')}
-生命徵象：血壓 ${record.vitalSigns.bloodPressure}, 心率 ${record.vitalSigns.heartRate}, 體溫 ${record.vitalSigns.temperature}°C
-病史：${record.medicalHistory.join(', ')}
-目前用藥：${record.currentMedications.join(', ')}
-過敏史：${record.allergies.join(', ')}
-理學檢查：${record.physicalExamination}
-實驗室結果：${record.laboratoryResults.map(r => `${r.testName}: ${r.result} (正常值: ${r.normalRange}, 狀態: ${r.status})`).join(', ')}
-診斷：${record.diagnosis.join(', ')}
-治療計畫：${record.treatmentPlan.join(', ')}
-醫師備註：${record.doctorNotes}
-
-請提供以下分析：
-1. 病歷摘要
-2. 關鍵發現
-3. 風險因素
-4. 建議診斷
-5. 藥物交互作用檢查
-6. 追蹤建議
-7. 緊急程度評估
-
-請以 JSON 格式回應：
-{
-  "summary": "病歷摘要",
-  "keyFindings": ["關鍵發現1", "關鍵發現2"],
-  "riskFactors": ["風險因素1", "風險因素2"],
-  "suggestedDiagnosis": ["建議診斷1", "建議診斷2"],
-  "medicationInteractions": ["交互作用1", "交互作用2"],
-  "followUpRecommendations": ["追蹤建議1", "追蹤建議2"],
-  "urgencyLevel": "low/medium/high/critical"
-}
-      `;
-
-      const aiResponse = await generateText(prompt, {
-        systemPrompt,
-        maxTokens: 1000,
-        temperature: 0.3
-      });
-
-      try {
-        const analysis = JSON.parse(aiResponse.content);
-        setAiAnalysis(analysis);
+      if (!existingAnalysis) {
+        // 使用真實 AI 服務分析病歷
+        existingAnalysis = await medicalRecordService.analyzeRecord(context.companyId, record);
         
-        // 如果是高風險或緊急情況，發送警示
-        if (analysis.urgencyLevel === 'critical' || analysis.urgencyLevel === 'high') {
-          await sendAlert('critical', '高風險病患', `病患 ${record.patientName} 需要立即關注`);
-        }
-        
-      } catch (parseError) {
-        console.error('AI 回應解析失敗:', parseError);
-        
-        // 備用分析
-        const fallbackAnalysis: AIAnalysis = {
-          summary: `病患 ${record.patientName} 因 ${record.chiefComplaint} 就診，主要症狀包括 ${record.symptoms.join(', ')}。`,
-          keyFindings: [
-            `血壓 ${record.vitalSigns.bloodPressure} 偏高`,
-            `心率 ${record.vitalSigns.heartRate} 次/分`,
-            `體溫 ${record.vitalSigns.temperature}°C`
-          ],
-          riskFactors: record.medicalHistory,
-          suggestedDiagnosis: record.diagnosis,
-          medicationInteractions: ['建議檢查藥物交互作用'],
-          followUpRecommendations: record.treatmentPlan,
-          urgencyLevel: record.vitalSigns.bloodPressure.includes('150') ? 'high' : 'medium'
-        };
-        
-        setAiAnalysis(fallbackAnalysis);
+        // 更新統計數據
+        const updatedStats = await medicalRecordService.getStats(context.companyId);
+        setStats({
+          totalRecords: updatedStats.total_records,
+          analyzedToday: updatedStats.analyzed_today,
+          avgAnalysisTime: updatedStats.avg_analysis_time,
+          accuracyRate: updatedStats.accuracy_rate
+        });
       }
-      
+
+      setAiAnalysis(existingAnalysis);
+
+      // 如果緊急程度高，發送警報
+      if (existingAnalysis.urgency_level === 'high' || existingAnalysis.urgency_level === 'critical') {
+        const patientName = record.patient?.patient_name || '未知患者';
+        await sendAlert(
+          `高風險病歷警示：${patientName}`,
+          `緊急程度：${existingAnalysis.urgency_level}\n${existingAnalysis.summary}`,
+          existingAnalysis.urgency_level
+        );
+      }
     } catch (error) {
-      console.error('AI 分析失敗:', error);
-      await sendAlert('warning', 'AI 分析失敗', '無法完成病歷分析，請手動檢查');
+      console.error('分析病歷失敗:', error);
+      setError('AI 分析失敗，請稍後重試');
     } finally {
       setAnalyzing(false);
     }
@@ -281,26 +250,26 @@ export function MedicalRecordAssistantModule({ context }: { context: ModuleConte
 - 姓名：${selectedRecord.patientName}
 - 年齡：${selectedRecord.patientAge} 歲
 - 性別：${selectedRecord.patientGender === 'male' ? '男' : '女'}
-- 就診日期：${selectedRecord.visitDate.toLocaleDateString('zh-TW')}
+- 就診日期：${selectedRecord.visitDate ? new Date(selectedRecord.visitDate).toLocaleDateString('zh-TW') : 'N/A'}
 - 主訴：${selectedRecord.chiefComplaint}
 
 ## AI 分析摘要
 ${aiAnalysis.summary}
 
 ## 關鍵發現
-${aiAnalysis.keyFindings.map(finding => `• ${finding}`).join('\n')}
+${(aiAnalysis.keyFindings || aiAnalysis.key_findings || []).map((finding: string) => `• ${finding}`).join('\n')}
 
 ## 風險因素
-${aiAnalysis.riskFactors.map(risk => `• ${risk}`).join('\n')}
+${(aiAnalysis.riskFactors || aiAnalysis.risk_factors || []).map((risk: string) => `• ${risk}`).join('\n')}
 
 ## 建議診斷
-${aiAnalysis.suggestedDiagnosis.map(diagnosis => `• ${diagnosis}`).join('\n')}
+${(aiAnalysis.suggestedDiagnosis || aiAnalysis.suggested_diagnosis || []).map((diagnosis: string) => `• ${diagnosis}`).join('\n')}
 
 ## 藥物交互作用
-${aiAnalysis.medicationInteractions.map(interaction => `• ${interaction}`).join('\n')}
+${(aiAnalysis.medicationInteractions || aiAnalysis.medication_interactions || []).map((interaction: string) => `• ${interaction}`).join('\n')}
 
 ## 追蹤建議
-${aiAnalysis.followUpRecommendations.map(recommendation => `• ${recommendation}`).join('\n')}
+${(aiAnalysis.followUpRecommendations || aiAnalysis.follow_up_recommendations || []).map((recommendation: string) => `• ${recommendation}`).join('\n')}
 
 ## 緊急程度
 ${aiAnalysis.urgencyLevel === 'critical' ? '🔴 緊急' :
@@ -434,7 +403,7 @@ ${selectedRecord.followUpInstructions}
                       <p className="text-sm text-slate-600">{record.patientAge}歲, {record.patientGender === 'male' ? '男' : '女'}</p>
                     </div>
                     <span className="text-xs text-slate-500">
-                      {record.visitDate.toLocaleDateString('zh-TW')}
+                      {record.visitDate ? new Date(record.visitDate).toLocaleDateString('zh-TW') : 'N/A'}
                     </span>
                   </div>
                   <p className="text-sm text-slate-600 mb-2">{record.chiefComplaint}</p>
@@ -489,7 +458,7 @@ ${selectedRecord.followUpInstructions}
                   <div>
                     <h5 className="font-semibold text-slate-900 mb-2">關鍵發現</h5>
                     <ul className="text-sm text-slate-600 space-y-1">
-                      {aiAnalysis.keyFindings.map((finding, index) => (
+                      {(aiAnalysis.keyFindings || aiAnalysis.key_findings || []).map((finding: string, index: number) => (
                         <li key={index} className="flex items-start gap-2">
                           <span className="text-blue-600 mt-1">•</span>
                           <span>{finding}</span>
@@ -501,7 +470,7 @@ ${selectedRecord.followUpInstructions}
                   <div>
                     <h5 className="font-semibold text-slate-900 mb-2">風險因素</h5>
                     <ul className="text-sm text-slate-600 space-y-1">
-                      {aiAnalysis.riskFactors.map((risk, index) => (
+                      {(aiAnalysis.riskFactors || aiAnalysis.risk_factors || []).map((risk: string, index: number) => (
                         <li key={index} className="flex items-start gap-2">
                           <span className="text-red-600 mt-1">•</span>
                           <span>{risk}</span>
@@ -513,7 +482,7 @@ ${selectedRecord.followUpInstructions}
                   <div>
                     <h5 className="font-semibold text-slate-900 mb-2">建議診斷</h5>
                     <ul className="text-sm text-slate-600 space-y-1">
-                      {aiAnalysis.suggestedDiagnosis.map((diagnosis, index) => (
+                      {(aiAnalysis.suggestedDiagnosis || aiAnalysis.suggested_diagnosis || []).map((diagnosis: string, index: number) => (
                         <li key={index} className="flex items-start gap-2">
                           <span className="text-green-600 mt-1">•</span>
                           <span>{diagnosis}</span>
@@ -525,7 +494,7 @@ ${selectedRecord.followUpInstructions}
                   <div>
                     <h5 className="font-semibold text-slate-900 mb-2">追蹤建議</h5>
                     <ul className="text-sm text-slate-600 space-y-1">
-                      {aiAnalysis.followUpRecommendations.map((recommendation, index) => (
+                      {(aiAnalysis.followUpRecommendations || aiAnalysis.follow_up_recommendations || []).map((recommendation: string, index: number) => (
                         <li key={index} className="flex items-start gap-2">
                           <span className="text-purple-600 mt-1">•</span>
                           <span>{recommendation}</span>

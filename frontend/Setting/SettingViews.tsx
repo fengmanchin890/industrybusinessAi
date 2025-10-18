@@ -1,13 +1,26 @@
 import React from 'react';
 import { useAuth } from '../Contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Building2, User, CreditCard, Database, Upload, FileSpreadsheet, Link as LinkIcon } from 'lucide-react';
-import { useState } from 'react';
+import { Building2, User, CreditCard, Database, Upload, FileSpreadsheet, Link as LinkIcon, Check, Zap, Crown } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 
 export function SettingsView() {
   const { profile, company } = useAuth();
   const isAdmin = profile?.role === 'admin';
+
+  // 訂閱升級對話框狀態
+  const [upgradeDialogOpen, setUpgradeDialogOpen] = useState(false);
+  const [selectedTier, setSelectedTier] = useState<'pro' | 'enterprise' | null>(null);
+  const [upgrading, setUpgrading] = useState(false);
+
+  // 调试：监控 upgradeDialogOpen 状态变化
+  useEffect(() => {
+    console.log('📊 upgradeDialogOpen 状态变化:', upgradeDialogOpen);
+    if (upgradeDialogOpen) {
+      console.log('✅ 对话框应该显示了！');
+    }
+  }, [upgradeDialogOpen]);
 
   // 匯入對話框狀態
   const [menuImportOpen, setMenuImportOpen] = useState(false);
@@ -33,6 +46,43 @@ export function SettingsView() {
   const [savingPos, setSavingPos] = useState(false);
   // 測試同步
   const [syncing, setSyncing] = useState<'menu'|'sales'|''>('');
+
+  // 處理訂閱升級
+  const handleUpgrade = async (tier: 'pro' | 'enterprise') => {
+    if (!company?.id || !isAdmin) {
+      alert('只有管理員可以升級方案');
+      return;
+    }
+
+    // 演示模式：允许直接升级到 Enterprise
+    // 生产环境可以根据需要启用联系销售的逻辑
+    const isDemoMode = true; // 设为 false 以启用"联系销售"模式
+    
+    if (tier === 'enterprise' && !isDemoMode) {
+      alert('企業方案需要與我們的銷售團隊聯繫。我們將盡快與您聯繫！');
+      setUpgradeDialogOpen(false);
+      return;
+    }
+
+    setUpgrading(true);
+    try {
+      // 更新公司訂閱等級
+      const { error } = await supabase
+        .from('companies')
+        .update({ subscription_tier: tier })
+        .eq('id', company.id);
+
+      if (error) throw error;
+
+      alert(`成功升級至 ${tier.toUpperCase()} 方案！頁面將重新載入以套用新權限。`);
+      window.location.reload();
+    } catch (error) {
+      console.error('升級失敗:', error);
+      alert('升級失敗，請稍後再試或聯繫客服。');
+    } finally {
+      setUpgrading(false);
+    }
+  };
 
   // 品牌資產設定
   const [brandOpen, setBrandOpen] = useState(false);
@@ -264,7 +314,16 @@ export function SettingsView() {
               </div>
             </div>
 
-            <button className="w-full bg-amber-600 text-white py-2.5 px-4 rounded-lg hover:bg-amber-700 transition-colors font-medium">
+            <button 
+              onClick={() => {
+                console.log('🔘 升级按钮被点击!');
+                console.log('   当前 upgradeDialogOpen:', upgradeDialogOpen);
+                console.log('   设置为 true...');
+                setUpgradeDialogOpen(true);
+                console.log('   setUpgradeDialogOpen 已调用');
+              }}
+              className="w-full bg-amber-600 text-white py-2.5 px-4 rounded-lg hover:bg-amber-700 transition-colors font-medium"
+            >
               升級方案
             </button>
           </div>
@@ -677,6 +736,221 @@ export function SettingsView() {
                 className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
               >
                 {savingPos ? '儲存中...' : '儲存連接'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 訂閱升級對話框 */}
+      {upgradeDialogOpen && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[9999] p-4" onClick={(e) => {
+          // 点击背景关闭对话框
+          if (e.target === e.currentTarget) {
+            console.log('🔘 点击背景关闭对话框');
+            setUpgradeDialogOpen(false);
+          }
+        }}>
+          <div className="w-full max-w-5xl bg-white rounded-2xl p-6 md:p-8 shadow-xl max-h-[90vh] overflow-y-auto">
+            <h3 className="text-2xl md:text-3xl font-bold mb-2 text-center">選擇最適合您的方案</h3>
+            <p className="text-slate-600 text-center mb-8">解鎖更多 AI 功能，提升企業競爭力</p>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-6">
+              {/* Basic Plan */}
+              <div className={`border-2 rounded-xl p-6 transition-all ${
+                company?.subscription_tier === 'basic' 
+                  ? 'border-blue-600 bg-blue-50 shadow-lg' 
+                  : 'border-slate-200 hover:border-slate-300'
+              }`}>
+                <div className="text-center mb-4">
+                  {company?.subscription_tier === 'basic' && (
+                    <div className="inline-block bg-blue-600 text-white text-xs px-3 py-1 rounded-full mb-2">
+                      目前方案
+                    </div>
+                  )}
+                  <h4 className="text-xl font-bold">Basic</h4>
+                  <div className="text-3xl font-bold text-blue-600 mt-2">NT$ 2,999</div>
+                  <div className="text-sm text-slate-600">/月</div>
+                </div>
+                <ul className="space-y-3 mb-6">
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">3 個基本 AI 模組</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">基礎報表功能</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">標準客服支援</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">基礎數據連接</span>
+                  </li>
+                </ul>
+                <div className="text-xs text-slate-600 bg-slate-50 rounded p-3 mb-4">
+                  ✨ 適合：10-50 人小企業
+                </div>
+                {company?.subscription_tier === 'basic' ? (
+                  <button disabled className="w-full bg-slate-200 text-slate-600 py-2.5 rounded-lg font-medium cursor-not-allowed">
+                    目前使用中
+                  </button>
+                ) : (
+                  <button 
+                    disabled
+                    className="w-full bg-slate-100 text-slate-400 py-2.5 rounded-lg font-medium cursor-not-allowed"
+                  >
+                    無法降級
+                  </button>
+                )}
+              </div>
+
+              {/* Pro Plan */}
+              <div className={`border-2 rounded-xl p-6 transition-all ${
+                company?.subscription_tier === 'pro' 
+                  ? 'border-amber-600 bg-amber-50 shadow-lg' 
+                  : 'border-amber-300 hover:border-amber-400 shadow-md'
+              }`}>
+                <div className="text-center mb-4">
+                  <div className="inline-block bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xs px-3 py-1 rounded-full mb-2">
+                    {company?.subscription_tier === 'pro' ? '目前方案' : '🔥 推薦方案'}
+                  </div>
+                  <h4 className="text-xl font-bold flex items-center justify-center gap-2">
+                    <Zap className="w-5 h-5 text-amber-600" />
+                    Pro
+                  </h4>
+                  <div className="text-3xl font-bold text-amber-600 mt-2">NT$ 8,999</div>
+                  <div className="text-sm text-slate-600">/月</div>
+                  <div className="text-xs text-green-600 font-medium mt-1">節省 33% 年付優惠</div>
+                </div>
+                <ul className="space-y-3 mb-6">
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm font-medium">10 個進階 AI 模組</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">深度分析報表</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">優先客服支援</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">API 整合功能</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">進階數據連接</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">自訂報表模板</span>
+                  </li>
+                </ul>
+                <div className="text-xs text-slate-600 bg-amber-50 rounded p-3 mb-4 border border-amber-200">
+                  ✨ 適合：50-200 人中型企業
+                </div>
+                {company?.subscription_tier === 'pro' ? (
+                  <button disabled className="w-full bg-amber-200 text-amber-800 py-2.5 rounded-lg font-medium cursor-not-allowed">
+                    目前使用中
+                  </button>
+                ) : (
+                  <button 
+                    onClick={() => handleUpgrade('pro')}
+                    disabled={upgrading}
+                    className="w-full bg-gradient-to-r from-amber-600 to-orange-600 text-white py-2.5 rounded-lg hover:from-amber-700 hover:to-orange-700 transition-all font-medium disabled:opacity-50 shadow-lg hover:shadow-xl"
+                  >
+                    {upgrading ? '處理中...' : '立即升級至 Pro'}
+                  </button>
+                )}
+              </div>
+
+              {/* Enterprise Plan */}
+              <div className={`border-2 rounded-xl p-6 transition-all ${
+                company?.subscription_tier === 'enterprise' 
+                  ? 'border-purple-600 bg-purple-50 shadow-lg' 
+                  : 'border-slate-200 hover:border-purple-300'
+              }`}>
+                <div className="text-center mb-4">
+                  {company?.subscription_tier === 'enterprise' && (
+                    <div className="inline-block bg-purple-600 text-white text-xs px-3 py-1 rounded-full mb-2">
+                      目前方案
+                    </div>
+                  )}
+                  <h4 className="text-xl font-bold flex items-center justify-center gap-2">
+                    <Crown className="w-5 h-5 text-purple-600" />
+                    Enterprise
+                  </h4>
+                  <div className="text-3xl font-bold text-purple-600 mt-2">NT$ 24,999</div>
+                  <div className="text-sm text-slate-600">/月</div>
+                </div>
+                <ul className="space-y-3 mb-6">
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm font-medium">全部 20+ AI 模組</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">客製化開發服務</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">專屬客戶經理</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">硬體整合支援</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">無限 API 呼叫</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">SLA 服務保證</span>
+                  </li>
+                </ul>
+                <div className="text-xs text-slate-600 bg-purple-50 rounded p-3 mb-4 border border-purple-200">
+                  ✨ 適合：200+ 人大型企業
+                </div>
+                {company?.subscription_tier === 'enterprise' ? (
+                  <button disabled className="w-full bg-purple-200 text-purple-800 py-2.5 rounded-lg font-medium cursor-not-allowed">
+                    目前使用中
+                  </button>
+                ) : (
+                  <button 
+                    onClick={() => handleUpgrade('enterprise')}
+                    disabled={upgrading}
+                    className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-2.5 rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all font-medium disabled:opacity-50"
+                  >
+                    {upgrading ? '升級中...' : '立即升級'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* 附加說明 */}
+            <div className="bg-blue-50 rounded-lg p-4 mb-6">
+              <p className="text-sm text-slate-700">
+                <strong>💡 提示：</strong>升級後立即解鎖所有對應方案的模組，無需等待。
+                所有數據將自動保留，且可隨時在模組商店安裝新功能。
+              </p>
+            </div>
+
+            <div className="flex justify-between items-center gap-3">
+              <div className="text-xs text-slate-500">
+                需要幫助？<a href="mailto:support@aibusinessplatform.com" className="text-blue-600 hover:underline ml-1">聯繫客服</a>
+              </div>
+              <button 
+                onClick={() => setUpgradeDialogOpen(false)}
+                disabled={upgrading}
+                className="px-6 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors disabled:opacity-50"
+              >
+                關閉
               </button>
             </div>
           </div>

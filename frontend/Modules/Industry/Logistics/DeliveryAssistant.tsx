@@ -282,7 +282,14 @@ ${deliveryData.vehicles.map(vehicle => `
       });
 
       try {
-        const optimization = JSON.parse(aiResponse.content);
+        // 使用 aiResponse.text 而不是 aiResponse.content
+        const responseText = aiResponse.text || aiResponse.content || '';
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        const optimization = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+        
+        if (!optimization) {
+          throw new Error('No JSON found in response');
+        }
         
         // 創建優化後的路線
         const newRoutes: DeliveryRoute[] = optimization.routes.map((route: any, index: number) => ({

@@ -275,7 +275,14 @@ ${document.content}
       });
 
       try {
-        const analysis = JSON.parse(aiResponse.content);
+        // 使用 aiResponse.text 而不是 aiResponse.content
+        const responseText = aiResponse.text || aiResponse.content || '';
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        const analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+        
+        if (!analysis) {
+          throw new Error('No JSON found in response');
+        }
         
         // 更新公文分析結果
         setDocuments(prev => prev.map(doc => 

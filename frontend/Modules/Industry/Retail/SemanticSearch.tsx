@@ -3,10 +3,11 @@
  * 让用户用自然语言找到想要的商品
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, Sparkles, TrendingUp, Filter } from 'lucide-react';
 import { ModuleBase, ModuleMetadata, ModuleCapabilities, ModuleContext } from '../../ModuleSDK';
 import { useModuleState } from '../../ModuleSDK';
+import { supabase } from '../../../lib/supabase';
 
 const metadata: ModuleMetadata = {
   id: 'semantic-search',
@@ -36,48 +37,113 @@ const capabilities: ModuleCapabilities = {
 };
 
 interface Product {
-  id: string;
-  name: string;
+  product_id?: string;
+  id?: string;
+  product_name?: string;
+  name?: string;
   category: string;
   price: number;
-  image: string;
-  relevance: number;
+  image_url?: string;
+  image?: string;
+  description?: string;
+  similarity_score?: number;
+  relevance?: number;
 }
-
-const mockProducts: Product[] = [
-  { id: '1', name: '舒适运动鞋', category: '鞋类', price: 1299, image: '👟', relevance: 0.95 },
-  { id: '2', name: '透气跑步鞋', category: '鞋类', price: 1599, image: '👟', relevance: 0.92 },
-  { id: '3', name: '休闲帆布鞋', category: '鞋类', price: 899, image: '👞', relevance: 0.85 },
-  { id: '4', name: '防水登山鞋', category: '鞋类', price: 2299, image: '🥾', relevance: 0.78 },
-];
 
 export function SemanticSearchModule({ context }: { context: ModuleContext }) {
   const { state } = useModuleState();
+  const { company, user } = context;
   const [searchQuery, setSearchQuery] = useState('');
   const [results, setResults] = useState<Product[]>([]);
   const [searching, setSearching] = useState(false);
+  const [currentSearchId, setCurrentSearchId] = useState<string | null>(null);
   const [stats, setStats] = useState({
-    totalSearches: 1247,
-    avgResultsClicked: 3.2,
-    searchSuccessRate: 87
+    totalSearches: 0,
+    avgResultsClicked: 0,
+    searchSuccessRate: 0
   });
 
+  useEffect(() => {
+    loadStatistics();
+  }, [company?.id]);
+
+  const loadStatistics = async () => {
+    if (!company?.id) return;
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('semantic-search-ai', {
+        body: {
+          action: 'get_statistics',
+          data: { companyId: company.id, days: 7 }
+        }
+      });
+
+      if (error) throw error;
+      
+      if (data?.data) {
+        setStats({
+          totalSearches: data.data.total_searches || 0,
+          avgResultsClicked: data.data.avg_results_count || 0,
+          searchSuccessRate: data.data.search_success_rate || 0
+        });
+      }
+    } catch (error) {
+      console.error('Error loading statistics:', error);
+    }
+  };
+
   const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
+    if (!searchQuery.trim() || !company?.id) return;
 
     setSearching(true);
-    // 模拟 AI 搜索
-    setTimeout(() => {
-      setResults(mockProducts.map(p => ({
-        ...p,
-        relevance: Math.random() * 0.3 + 0.7
-      })).sort((a, b) => b.relevance - a.relevance));
+    try {
+      const { data, error } = await supabase.functions.invoke('semantic-search-ai', {
+        body: {
+          action: 'search',
+          data: {
+            companyId: company.id,
+            query: searchQuery,
+            limit: 20
+          }
+        }
+      });
+
+      if (error) throw error;
+
+      if (data?.data) {
+        setResults(data.data.results || []);
+        setCurrentSearchId(data.data.searchQueryId);
+        
+        // Update stats
+        setStats(prev => ({
+          ...prev,
+          totalSearches: prev.totalSearches + 1
+        }));
+      }
+    } catch (error) {
+      console.error('Error searching:', error);
+      alert('搜索失败，请稍后重试');
+    } finally {
       setSearching(false);
-      setStats(prev => ({
-        ...prev,
-        totalSearches: prev.totalSearches + 1
-      }));
-    }, 800);
+    }
+  };
+
+  const handleProductClick = async (productId: string) => {
+    if (!currentSearchId) return;
+
+    try {
+      await supabase.functions.invoke('semantic-search-ai', {
+        body: {
+          action: 'track_click',
+          data: {
+            searchQueryId: currentSearchId,
+            productId: productId
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error tracking click:', error);
+    }
   };
 
   return (
@@ -172,23 +238,44 @@ export function SemanticSearchModule({ context }: { context: ModuleContext }) {
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {results.map(product => (
-              <div
-                key={product.id}
-                className="border-2 border-slate-200 rounded-lg p-4 hover:border-blue-600 hover:shadow-lg transition-all cursor-pointer"
-              >
-                <div className="text-6xl text-center mb-3">{product.image}</div>
-                <div className="flex items-start justify-between mb-2">
-                  <h5 className="font-semibold text-slate-900">{product.name}</h5>
-                  <div className="flex items-center gap-1 text-xs text-green-600 bg-green-50 px-2 py-1 rounded">
-                    <Sparkles className="w-3 h-3" />
-                    {(product.relevance * 100).toFixed(0)}%
+            {results.map(product => {
+              const productId = product.product_id || product.id || '';
+              const productName = product.product_name || product.name || '未命名产品';
+              const relevanceScore = product.similarity_score || product.relevance || 0;
+              const imageUrl = product.image_url || product.image;
+              
+              return (
+                <div
+                  key={productId}
+                  onClick={() => handleProductClick(productId)}
+                  className="border-2 border-slate-200 rounded-lg p-4 hover:border-blue-600 hover:shadow-lg transition-all cursor-pointer"
+                >
+                  {imageUrl ? (
+                    imageUrl.startsWith('http') ? (
+                      <img src={imageUrl} alt={productName} className="w-full h-32 object-cover rounded mb-3" />
+                    ) : (
+                      <div className="text-6xl text-center mb-3">{imageUrl}</div>
+                    )
+                  ) : (
+                    <div className="w-full h-32 bg-slate-100 rounded mb-3 flex items-center justify-center">
+                      <Search className="w-12 h-12 text-slate-400" />
+                    </div>
+                  )}
+                  <div className="flex items-start justify-between mb-2">
+                    <h5 className="font-semibold text-slate-900 flex-1 mr-2">{productName}</h5>
+                    <div className="flex items-center gap-1 text-xs text-green-600 bg-green-50 px-2 py-1 rounded whitespace-nowrap">
+                      <Sparkles className="w-3 h-3" />
+                      {(relevanceScore * 100).toFixed(0)}%
+                    </div>
                   </div>
+                  {product.description && (
+                    <p className="text-xs text-slate-500 mb-2 line-clamp-2">{product.description}</p>
+                  )}
+                  <p className="text-sm text-slate-600 mb-2">{product.category}</p>
+                  <p className="text-xl font-bold text-blue-600">¥{product.price}</p>
                 </div>
-                <p className="text-sm text-slate-600 mb-2">{product.category}</p>
-                <p className="text-xl font-bold text-blue-600">${product.price}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

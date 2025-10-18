@@ -174,6 +174,7 @@ CREATE TABLE IF NOT EXISTS data_connections (
 ALTER TABLE data_connections ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for companies
+DROP POLICY IF EXISTS "Users can view their own company" ON companies;
 CREATE POLICY "Users can view their own company"
   ON companies FOR SELECT
   TO authenticated
@@ -183,6 +184,7 @@ CREATE POLICY "Users can view their own company"
     )
   );
 
+DROP POLICY IF EXISTS "Company admins can update their company" ON companies;
 CREATE POLICY "Company admins can update their company"
   ON companies FOR UPDATE
   TO authenticated
@@ -200,6 +202,7 @@ CREATE POLICY "Company admins can update their company"
   );
 
 -- RLS Policies for users
+DROP POLICY IF EXISTS "Users can view users in their company" ON users;
 CREATE POLICY "Users can view users in their company"
   ON users FOR SELECT
   TO authenticated
@@ -209,6 +212,7 @@ CREATE POLICY "Users can view users in their company"
     )
   );
 
+DROP POLICY IF EXISTS "Admins can manage users in their company" ON users;
 CREATE POLICY "Admins can manage users in their company"
   ON users FOR ALL
   TO authenticated
@@ -226,12 +230,14 @@ CREATE POLICY "Admins can manage users in their company"
   );
 
 -- RLS Policies for ai_modules (public catalog)
+DROP POLICY IF EXISTS "All authenticated users can view active modules" ON ai_modules;
 CREATE POLICY "All authenticated users can view active modules"
   ON ai_modules FOR SELECT
   TO authenticated
   USING (is_active = true);
 
 -- RLS Policies for company_modules
+DROP POLICY IF EXISTS "Users can view their company's modules" ON company_modules;
 CREATE POLICY "Users can view their company's modules"
   ON company_modules FOR SELECT
   TO authenticated
@@ -241,6 +247,7 @@ CREATE POLICY "Users can view their company's modules"
     )
   );
 
+DROP POLICY IF EXISTS "Admins can manage their company's modules" ON company_modules;
 CREATE POLICY "Admins can manage their company's modules"
   ON company_modules FOR ALL
   TO authenticated
@@ -258,6 +265,7 @@ CREATE POLICY "Admins can manage their company's modules"
   );
 
 -- RLS Policies for reports
+DROP POLICY IF EXISTS "Users can view their company's reports" ON reports;
 CREATE POLICY "Users can view their company's reports"
   ON reports FOR SELECT
   TO authenticated
@@ -267,6 +275,7 @@ CREATE POLICY "Users can view their company's reports"
     )
   );
 
+DROP POLICY IF EXISTS "Operators and admins can create reports" ON reports;
 CREATE POLICY "Operators and admins can create reports"
   ON reports FOR INSERT
   TO authenticated
@@ -278,6 +287,7 @@ CREATE POLICY "Operators and admins can create reports"
   );
 
 -- RLS Policies for alerts
+DROP POLICY IF EXISTS "Users can view their company's alerts" ON alerts;
 CREATE POLICY "Users can view their company's alerts"
   ON alerts FOR SELECT
   TO authenticated
@@ -287,6 +297,7 @@ CREATE POLICY "Users can view their company's alerts"
     )
   );
 
+DROP POLICY IF EXISTS "Users can mark alerts as read" ON alerts;
 CREATE POLICY "Users can mark alerts as read"
   ON alerts FOR UPDATE
   TO authenticated
@@ -302,6 +313,7 @@ CREATE POLICY "Users can mark alerts as read"
   );
 
 -- RLS Policies for data_connections
+DROP POLICY IF EXISTS "Users can view their company's connections" ON data_connections;
 CREATE POLICY "Users can view their company's connections"
   ON data_connections FOR SELECT
   TO authenticated
@@ -311,6 +323,7 @@ CREATE POLICY "Users can view their company's connections"
     )
   );
 
+DROP POLICY IF EXISTS "Admins can manage their company's connections" ON data_connections;
 CREATE POLICY "Admins can manage their company's connections"
   ON data_connections FOR ALL
   TO authenticated

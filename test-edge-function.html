@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>測試 Edge Function CORS</title>
+</head>
+<body>
+    <h1>測試 Student Performance Analyzer Edge Function</h1>
+    <button onclick="testFunction()">測試 Edge Function</button>
+    <pre id="result"></pre>
+
+    <script>
+        async function testFunction() {
+            const resultEl = document.getElementById('result');
+            resultEl.textContent = '測試中...';
+
+            try {
+                // 測試 OPTIONS 請求（CORS preflight）
+                const optionsResponse = await fetch('https://ergqqdirsvmamowpklia.supabase.co/functions/v1/student-performance-analyzer', {
+                    method: 'OPTIONS',
+                    headers: {
+                        'Access-Control-Request-Method': 'POST',
+                        'Access-Control-Request-Headers': 'authorization, content-type'
+                    }
+                });
+
+                resultEl.textContent += `\nOPTIONS 請求狀態: ${optionsResponse.status}\n`;
+                resultEl.textContent += `CORS Headers:\n`;
+                for (const [key, value] of optionsResponse.headers.entries()) {
+                    if (key.startsWith('access-control')) {
+                        resultEl.textContent += `  ${key}: ${value}\n`;
+                    }
+                }
+
+                // 測試實際 POST 請求（需要替換為真實的 anon key）
+                const ANON_KEY = 'YOUR_ANON_KEY_HERE'; // 從 Supabase Dashboard 取得
+                
+                const postResponse = await fetch('https://ergqqdirsvmamowpklia.supabase.co/functions/v1/student-performance-analyzer', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${ANON_KEY}`,
+                        'apikey': ANON_KEY
+                    },
+                    body: JSON.stringify({
+                        action: 'analyze_performance',
+                        data: {
+                            studentId: 'test-id'
+                        }
+                    })
+                });
+
+                resultEl.textContent += `\n\nPOST 請求狀態: ${postResponse.status}\n`;
+                const data = await postResponse.json();
+                resultEl.textContent += `回應: ${JSON.stringify(data, null, 2)}`;
+
+            } catch (error) {
+                resultEl.textContent += `\n\n錯誤: ${error.message}`;
+                console.error('詳細錯誤:', error);
+            }
+        }
+    </script>
+</body>
+</html>
+
+

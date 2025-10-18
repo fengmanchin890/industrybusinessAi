@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Union
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -9,7 +10,21 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     
     # CORS
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
+    ALLOWED_ORIGINS: Union[List[str], str] = ["http://localhost:5173", "http://localhost:3000"]
+    
+    @field_validator('ALLOWED_ORIGINS', mode='before')
+    @classmethod
+    def parse_origins(cls, v):
+        """Parse ALLOWED_ORIGINS from string or list"""
+        if isinstance(v, str):
+            import json
+            try:
+                # Try to parse as JSON array
+                return json.loads(v.replace("'", '"'))
+            except:
+                # If not JSON, split by comma
+                return [origin.strip() for origin in v.split(',')]
+        return v
     
     # Supabase
     SUPABASE_URL: str = ""
@@ -17,13 +32,13 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str = ""
     
     # Database
-    DATABASE_URL: str = "postgresql://postgres:postgres@postgres:5432/ai_platform"
+    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/ai_platform"
     
     # Vector Database
-    QDRANT_URL: str = "http://qdrant:6333"
+    QDRANT_URL: str = "http://localhost:6333"
     
     # Cache
-    REDIS_URL: str = "redis://redis:6379"
+    REDIS_URL: str = "redis://localhost:6379"
     
     # AI Providers
     OPENAI_API_KEY: str = ""

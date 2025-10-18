@@ -4,7 +4,7 @@
  */
 
 import { useState } from 'react';
-import { Camera, CheckCircle, XCircle, Upload, Play, Pause, Settings } from 'lucide-react';
+import { Camera, CheckCircle, XCircle, Upload, Play, Pause, Settings, X } from 'lucide-react';
 import { ModuleBase, ModuleMetadata, ModuleCapabilities, ModuleContext } from '../../ModuleSDK';
 import { useModuleState, useReportGeneration, useAlertSending } from '../../ModuleSDK';
 
@@ -51,6 +51,7 @@ export function QualityInspectionModule({ context }: { context: ModuleContext })
   
   const [isInspecting, setIsInspecting] = useState(false);
   const [results, setResults] = useState<InspectionResult[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
   const [stats, setStats] = useState({
     totalInspected: 0,
     passCount: 0,
@@ -137,6 +138,105 @@ ${stats.defectRate > 5 ? '⚠️ 瑕疵率偏高，建议检查生产流程' : '
 
   return (
     <div className="space-y-6">
+      {/* Settings Dialog */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4">
+            <div className="bg-gradient-to-r from-blue-600 to-cyan-600 text-white px-6 py-4 rounded-t-xl flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-bold">品检模组设置</h3>
+                <p className="text-sm opacity-90 mt-1">配置检测参数</p>
+              </div>
+              <button
+                onClick={() => setShowSettings(false)}
+                className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  检测灵敏度
+                </label>
+                <input
+                  type="range"
+                  min="1"
+                  max="10"
+                  defaultValue="5"
+                  className="w-full"
+                />
+                <div className="flex justify-between text-xs text-slate-500 mt-1">
+                  <span>宽松</span>
+                  <span>标准</span>
+                  <span>严格</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  瑕疵类型
+                </label>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" defaultChecked className="rounded" />
+                    <span className="text-sm text-slate-700">表面刮痕</span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" defaultChecked className="rounded" />
+                    <span className="text-sm text-slate-700">尺寸偏差</span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" className="rounded" />
+                    <span className="text-sm text-slate-700">颜色异常</span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" className="rounded" />
+                    <span className="text-sm text-slate-700">形状缺陷</span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  自动警示阈值
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    defaultValue="5"
+                    className="w-20 px-3 py-2 border border-slate-300 rounded-lg"
+                  />
+                  <span className="text-sm text-slate-600">%（瑕疵率）</span>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-200">
+                <p className="text-xs text-slate-500">
+                  💡 提示：设置将自动保存并应用到后续检测
+                </p>
+              </div>
+            </div>
+            <div className="bg-slate-50 px-6 py-4 rounded-b-xl flex justify-end gap-3">
+              <button
+                onClick={() => setShowSettings(false)}
+                className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors font-medium"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => setShowSettings(false)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+              >
+                保存设置
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -161,7 +261,11 @@ ${stats.defectRate > 5 ? '⚠️ 瑕疵率偏高，建议检查生产流程' : '
               启动检测
             </button>
           )}
-          <button className="p-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors">
+          <button 
+            onClick={() => setShowSettings(true)}
+            className="p-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors"
+            title="設定"
+          >
             <Settings className="w-5 h-5" />
           </button>
         </div>

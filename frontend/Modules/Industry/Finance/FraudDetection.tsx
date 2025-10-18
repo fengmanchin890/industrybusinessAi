@@ -188,38 +188,123 @@ export function FraudDetectionModule({ context }: { context: ModuleContext }) {
 
   const loadData = async () => {
     try {
-      setTransactions(mockTransactions);
-      setRiskProfiles(mockRiskProfiles);
-      
-      // 生成對應的警示
-      const mockAlerts: FraudAlert[] = mockTransactions
-        .filter(t => t.fraudIndicators.length > 0)
-        .map(t => ({
-          id: `A${t.id}`,
-          transactionId: t.id,
-          severity: t.riskScore > 80 ? 'critical' : t.riskScore > 60 ? 'high' : 'medium',
-          alertType: t.fraudIndicators[0] as any,
-          description: `交易 ${t.id} 偵測到異常行為`,
-          timestamp: t.timestamp,
-          status: t.status === 'blocked' ? 'resolved' : 'investigating',
-          assignedTo: t.status === 'investigating' ? '調查員A' : undefined
+      if (!company?.id) {
+        console.log('沒有公司ID，使用 mock 數據');
+        setTransactions(mockTransactions);
+        setRiskProfiles(mockRiskProfiles);
+        loadMockAlerts();
+        return;
+      }
+
+      // 從 Supabase 載入真實交易數據
+      const { data: transactionsData, error: transError } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('company_id', company.id)
+        .order('transaction_time', { ascending: false })
+        .limit(50);
+
+      if (transError) {
+        console.error('載入交易數據錯誤:', transError);
+        // 降級使用 mock 數據
+        setTransactions(mockTransactions);
+        loadMockAlerts();
+        return;
+      }
+
+      // 轉換數據格式
+      const formattedTransactions: Transaction[] = (transactionsData || []).map(t => ({
+        id: t.id,
+        timestamp: new Date(t.transaction_time),
+        customerId: t.user_id || t.source_account || 'unknown',
+        customerName: t.merchant_name || '客戶',
+        amount: parseFloat(t.amount || 0),
+        currency: t.currency || 'TWD',
+        transactionType: t.transaction_type || 'purchase',
+        merchant: t.merchant_name,
+        location: t.location || { country: 'TW', city: 'Taipei' },
+        device: { 
+          type: 'mobile', 
+          ip: t.ip_address || '0.0.0.0', 
+          userAgent: t.device_id || 'Unknown' 
+        },
+        riskScore: parseFloat(t.risk_score || 0),
+        status: t.transaction_status || 'pending',
+        fraudIndicators: t.flagged_reason ? t.flagged_reason.split(', ') : []
+      }));
+
+      setTransactions(formattedTransactions);
+
+      // 載入警報
+      const { data: alertsData } = await supabase
+        .from('fraud_alerts')
+        .select('*')
+        .eq('company_id', company.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (alertsData) {
+        const formattedAlerts: FraudAlert[] = alertsData.map(a => ({
+          id: a.id,
+          transactionId: a.transaction_id || '',
+          severity: a.severity || 'medium',
+          alertType: a.alert_type || 'pattern_anomaly',
+          description: a.message,
+          timestamp: new Date(a.created_at),
+          status: a.status || 'new',
+          assignedTo: a.acknowledged_by,
+          resolution: a.details?.resolution
         }));
-      
-      setAlerts(mockAlerts);
+        setAlerts(formattedAlerts);
+      }
+
+      // 計算統計數據
+      const totalTrans = formattedTransactions.length;
+      const blockedCount = formattedTransactions.filter(t => t.status === 'blocked').length;
       
       setStats({
-        totalTransactions: mockTransactions.length,
-        blockedTransactions: mockTransactions.filter(t => t.status === 'blocked').length,
-        falsePositiveRate: 2.5,
+        totalTransactions: totalTrans,
+        blockedTransactions: blockedCount,
+        falsePositiveRate: totalTrans > 0 ? ((blockedCount / totalTrans) * 100) : 0,
         avgResponseTime: 3.2
       });
+
     } catch (error) {
       console.error('載入詐欺偵測數據失敗:', error);
+      // 降級使用 mock 數據
+      setTransactions(mockTransactions);
+      loadMockAlerts();
     }
+  };
+
+  const loadMockAlerts = () => {
+    const mockAlerts: FraudAlert[] = mockTransactions
+      .filter(t => t.fraudIndicators.length > 0)
+      .map((t) => ({
+        id: `ALERT-${t.id}`,
+        transactionId: t.id,
+        severity: t.riskScore > 80 ? 'critical' : t.riskScore > 60 ? 'high' : 'medium',
+        alertType: t.fraudIndicators[0] as any,
+        description: `交易 ${t.id} 偵測到異常行為`,
+        timestamp: t.timestamp,
+        status: t.status === 'blocked' ? 'resolved' : 'investigating',
+        assignedTo: t.status === 'investigating' ? '調查員A' : undefined
+      }));
+    
+    setAlerts(mockAlerts);
+    
+    setStats({
+      totalTransactions: mockTransactions.length,
+      blockedTransactions: mockTransactions.filter(t => t.status === 'blocked').length,
+      falsePositiveRate: 2.5,
+      avgResponseTime: 3.2
+    });
   };
 
   const startMonitoring = () => {
     setRunning();
+    
+    let transactionCounter = 0;
     
     // 模擬實時交易監控
     const interval = setInterval(() => {
@@ -228,9 +313,10 @@ export function FraudDetectionModule({ context }: { context: ModuleContext }) {
         return;
       }
 
-      // 生成新的模擬交易
+      // 生成新的模擬交易 - 使用計數器確保唯一性
+      transactionCounter++;
       const newTransaction: Transaction = {
-        id: `T${Date.now()}`,
+        id: `T${Date.now()}-${transactionCounter}-${Math.random().toString(36).substr(2, 9)}`,
         timestamp: new Date(),
         customerId: `C${Math.floor(Math.random() * 1000)}`,
         customerName: `客戶${Math.floor(Math.random() * 100)}`,
@@ -261,7 +347,57 @@ export function FraudDetectionModule({ context }: { context: ModuleContext }) {
 
   const analyzeTransactionRisk = async (transaction: Transaction) => {
     try {
-      // 使用 AI 分析交易風險
+      // 優先使用 Edge Function 進行 AI 分析
+      if (company?.id) {
+        try {
+          // Convert frontend transaction format to backend format
+          const transactionData = {
+            id: transaction.id,
+            user_id: transaction.customerId,
+            amount: transaction.amount.toString(),
+            transaction_type: transaction.transactionType,
+            transaction_time: transaction.timestamp.toISOString(),
+            merchant_name: transaction.merchant || transaction.customerName,
+            location: transaction.location,
+            ip_address: transaction.device.ip,
+            device_id: transaction.device.userAgent,
+            transaction_status: transaction.status,
+            risk_score: transaction.riskScore,
+            currency: transaction.currency
+          };
+
+          const { data: analysisData, error } = await supabase.functions.invoke('fraud-detection-analyzer', {
+            body: {
+              action: 'analyze_transaction',
+              data: {
+                transaction: transactionData
+              }
+            }
+          });
+
+          if (!error && analysisData) {
+            console.log('✅ Edge Function 分析成功:', analysisData);
+            // 更新交易的風險評分
+            setTransactions(prev => prev.map(t => 
+              t.id === transaction.id ? {
+                ...t,
+                riskScore: analysisData.risk_assessment?.risk_score || t.riskScore,
+                status: analysisData.risk_assessment?.is_suspicious ? 'investigating' : 'approved',
+                fraudIndicators: analysisData.risk_factors || []
+              } : t
+            ));
+            return;
+          } else if (error) {
+            console.warn('⚠️ Edge Function 錯誤，使用本地分析:', error);
+          }
+        } catch (edgeFnError) {
+          console.warn('⚠️ Edge Function 調用失敗，使用本地分析:', edgeFnError);
+        }
+      }
+
+      // 降級：使用本地 AI 分析 (當 Edge Function 不可用時)
+      console.log('📊 使用本地 AI 分析交易:', transaction.id);
+      
       const systemPrompt = `你是一個專業的金融詐欺偵測專家，專門分析交易風險。請根據交易特徵評估風險等級並識別潛在的詐欺指標。`;
       
       const prompt = `
@@ -297,63 +433,102 @@ export function FraudDetectionModule({ context }: { context: ModuleContext }) {
       });
 
       try {
-        const analysis = JSON.parse(aiResponse.content);
+        // 使用 aiResponse.content
+        const responseText = (aiResponse as any).text || aiResponse.content || '';
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        const analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+        
+        if (!analysis) {
+          throw new Error('No JSON found in response');
+        }
+        
+        // 确保 fraudIndicators 是数组
+        const fraudIndicators = Array.isArray(analysis.fraudIndicators) ? analysis.fraudIndicators : [];
+        const riskScore = typeof analysis.riskScore === 'number' ? analysis.riskScore : 0;
         
         // 更新交易風險評分
-        const updatedTransaction = {
+        const updatedTransaction: Transaction = {
           ...transaction,
-          riskScore: analysis.riskScore,
-          fraudIndicators: analysis.fraudIndicators,
-          status: analysis.recommendation === 'approve' ? 'approved' :
-                  analysis.recommendation === 'block' ? 'blocked' : 'investigating'
+          riskScore: riskScore,
+          fraudIndicators: fraudIndicators,
+          status: (analysis.recommendation === 'approve' ? 'approved' :
+                  analysis.recommendation === 'block' ? 'blocked' : 'investigating') as Transaction['status']
         };
 
         setTransactions(prev => [updatedTransaction, ...prev.slice(0, 50)]);
 
         // 如果偵測到高風險，生成警示
-        if (analysis.riskScore > 70 || analysis.fraudIndicators.length > 0) {
+        if (riskScore > 70 || fraudIndicators.length > 0) {
           const alert: FraudAlert = {
-            id: `A${transaction.id}`,
+            id: `A${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             transactionId: transaction.id,
-            severity: analysis.riskScore > 90 ? 'critical' :
-                     analysis.riskScore > 80 ? 'high' :
-                     analysis.riskScore > 60 ? 'medium' : 'low',
-            alertType: analysis.fraudIndicators[0] || 'pattern_anomaly',
-            description: `交易 ${transaction.id} 偵測到異常行為: ${analysis.reasoning}`,
+            severity: riskScore > 90 ? 'critical' :
+                     riskScore > 80 ? 'high' :
+                     riskScore > 60 ? 'medium' : 'low',
+            alertType: fraudIndicators[0] || 'pattern_anomaly',
+            description: `交易 ${transaction.id} 偵測到異常行為: ${analysis.reasoning || '未知風險'}`,
             timestamp: new Date(),
             status: 'new'
           };
 
-          setAlerts(prev => [alert, ...prev.slice(0, 20)]);
+          // 只添加不重複的警示
+          setAlerts(prev => {
+            const exists = prev.some(a => a.transactionId === transaction.id);
+            if (exists) return prev;
+            return [alert, ...prev.slice(0, 20)];
+          });
           
           // 發送即時警示
           await sendAlert(
             alert.severity === 'critical' ? 'critical' : 
             alert.severity === 'high' ? 'high' : 'medium',
             '詐欺偵測警示',
-            `交易 ${transaction.id} 風險評分: ${analysis.riskScore}`
+            `交易 ${transaction.id} 風險評分: ${riskScore}`
           );
         }
         
       } catch (parseError) {
-        console.error('AI 風險分析解析失敗:', parseError);
+        console.error('❌ AI 風險分析解析失敗，使用簡單規則評估:', parseError);
         
-        // 備用風險評估
-        const riskScore = Math.random() * 100;
-        const fraudIndicators = riskScore > 70 ? ['pattern_anomaly'] : [];
+        // 備用：簡單規則評估
+        let riskScore = 0;
+        const fraudIndicators: string[] = [];
         
-        const updatedTransaction = {
+        // 簡單規則
+        if (transaction.amount > 50000) {
+          riskScore += 40;
+          fraudIndicators.push('unusual_amount');
+        }
+        if (transaction.amount > 100000) {
+          riskScore += 30;
+        }
+        
+        const hour = transaction.timestamp.getHours();
+        if (hour >= 0 && hour <= 5) {
+          riskScore += 20;
+          fraudIndicators.push('unusual_time');
+        }
+        
+        if (transaction.location.country !== 'TW') {
+          riskScore += 30;
+          fraudIndicators.push('unusual_location');
+        }
+        
+        const updatedTransaction: Transaction = {
           ...transaction,
-          riskScore,
+          riskScore: Math.min(riskScore, 100),
           fraudIndicators,
-          status: riskScore > 80 ? 'blocked' : riskScore > 60 ? 'investigating' : 'approved'
+          status: (riskScore > 80 ? 'blocked' : riskScore > 60 ? 'investigating' : 'approved') as Transaction['status']
         };
 
         setTransactions(prev => [updatedTransaction, ...prev.slice(0, 50)]);
+        console.log('✅ 規則評估完成，風險分數:', riskScore);
       }
       
     } catch (error) {
-      console.error('風險分析失敗:', error);
+      console.error('❌ 風險分析完全失敗:', error);
+      // 即使失敗也要顯示交易
+      setTransactions(prev => [{...transaction, status: 'pending' as Transaction['status']}, ...prev.slice(0, 50)]);
     }
   };
 
@@ -362,7 +537,7 @@ export function FraudDetectionModule({ context }: { context: ModuleContext }) {
       alert.id === alertId ? { ...alert, status: 'investigating', assignedTo: '調查員A' } : alert
     ));
     
-    await sendAlert('info', '開始調查', `警示 ${alertId} 已開始調查`);
+    await sendAlert('low', '開始調查', `警示 ${alertId} 已開始調查`);
   };
 
   const resolveAlert = async (alertId: string, resolution: string) => {
@@ -370,7 +545,7 @@ export function FraudDetectionModule({ context }: { context: ModuleContext }) {
       alert.id === alertId ? { ...alert, status: 'resolved', resolution } : alert
     ));
     
-    await sendAlert('success', '警示已解決', `警示 ${alertId} 已解決: ${resolution}`);
+    await sendAlert('low', '警示已解決', `警示 ${alertId} 已解決: ${resolution}`);
   };
 
   const generateFraudReport = async () => {

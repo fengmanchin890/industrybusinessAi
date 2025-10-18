@@ -8,11 +8,20 @@ import uuid
 
 class QdrantService:
     def __init__(self):
-        self.client = QdrantClient(url=settings.QDRANT_URL)
-        app_logger.info(f"Connected to Qdrant at {settings.QDRANT_URL}")
+        try:
+            self.client = QdrantClient(url=settings.QDRANT_URL)
+            app_logger.info(f"Connected to Qdrant at {settings.QDRANT_URL}")
+        except Exception as e:
+            app_logger.warning(f"Could not connect to Qdrant at {settings.QDRANT_URL}: {e}")
+            app_logger.warning("Qdrant service will return mock data. Start Qdrant to enable vector search.")
+            self.client = None
     
     def create_collection(self, collection_name: str, vector_size: int = 1536):
         """Create a collection for embeddings"""
+        if not self.client:
+            app_logger.warning(f"Qdrant not available, skipping collection creation for {collection_name}")
+            return
+        
         try:
             collections = self.client.get_collections().collections
             if collection_name in [c.name for c in collections]:
@@ -36,6 +45,10 @@ class QdrantService:
         embeddings: List[List[float]]
     ):
         """Store embeddings with tenant isolation"""
+        if not self.client:
+            app_logger.warning("Qdrant not available, skipping upsert")
+            return {"status": "skipped", "reason": "Qdrant not available"}
+        
         try:
             points = [
                 PointStruct(
@@ -67,6 +80,10 @@ class QdrantService:
         limit: int = 5
     ) -> List[Dict[str, Any]]:
         """Search with tenant filtering"""
+        if not self.client:
+            app_logger.warning("Qdrant not available, returning empty results")
+            return []
+        
         try:
             results = self.client.search(
                 collection_name=collection_name,

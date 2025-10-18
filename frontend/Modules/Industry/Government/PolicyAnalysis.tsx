@@ -328,7 +328,14 @@ export function PolicyAnalysisModule({ context }: { context: ModuleContext }) {
       });
 
       try {
-        const analysisData = JSON.parse(aiResponse.content);
+        // 使用 aiResponse.text 而不是 aiResponse.content
+        const responseText = aiResponse.text || aiResponse.content || '';
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        const analysisData = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+        
+        if (!analysisData) {
+          throw new Error('No JSON found in response');
+        }
         
         const analysis: PolicyAnalysis = {
           id: `A${Date.now()}`,

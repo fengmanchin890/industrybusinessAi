@@ -315,25 +315,36 @@ ${document.content}
       });
 
       try {
-        const reviewData = JSON.parse(aiResponse.content);
+        // 使用 aiResponse.text 而不是 aiResponse.content
+        const responseText = aiResponse.text || aiResponse.content || '';
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        const reviewData = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+        
+        if (!reviewData) {
+          throw new Error('No JSON found in response');
+        }
+        
+        // 确保所有字段都存在并提供默认值
+        const issues = Array.isArray(reviewData.issues) ? reviewData.issues : [];
+        const recommendations = Array.isArray(reviewData.recommendations) ? reviewData.recommendations : ['文件審核完成'];
         
         const reviewResult: DocumentReview = {
           id: `R${Date.now()}`,
           documentId: document.id,
-          overallScore: reviewData.overallScore,
-          riskLevel: reviewData.riskLevel,
-          complianceScore: reviewData.complianceScore,
-          issues: reviewData.issues.map((issue: any, index: number) => ({
+          overallScore: reviewData.overallScore || 75,
+          riskLevel: reviewData.riskLevel || 'medium',
+          complianceScore: reviewData.complianceScore || 80,
+          issues: issues.map((issue: any, index: number) => ({
             id: `I${Date.now()}_${index}`,
-            type: issue.type,
-            severity: issue.severity,
-            description: issue.description,
-            location: issue.location,
-            suggestion: issue.suggestion,
+            type: issue.type || 'risk',
+            severity: issue.severity || 'medium',
+            description: issue.description || '需要進一步審查',
+            location: issue.location || '未指定',
+            suggestion: issue.suggestion || '建議詳細檢查',
             status: 'open' as const
           })),
-          recommendations: reviewData.recommendations,
-          summary: reviewData.summary,
+          recommendations: recommendations,
+          summary: reviewData.summary || '文件審核完成，請查看詳細問題清單',
           reviewedAt: new Date(),
           reviewedBy: 'AI 審核系統'
         };

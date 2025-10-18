@@ -18,16 +18,28 @@ app = FastAPI(
 )
 
 # CORS middleware
+# Handle ALLOWED_ORIGINS which might be a list or a string
+if isinstance(settings.ALLOWED_ORIGINS, str):
+    # If it's a string like '["http://localhost:5173"]', evaluate it safely
+    import json
+    try:
+        origins = json.loads(settings.ALLOWED_ORIGINS.replace("'", '"'))
+    except:
+        origins = [settings.ALLOWED_ORIGINS]
+else:
+    origins = settings.ALLOWED_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Prometheus metrics
-Instrumentator().instrument(app).expose(app)
+# Temporarily disabled to debug middleware issue
+# Instrumentator().instrument(app).expose(app)
 
 # Health check endpoint
 @app.get("/health")
